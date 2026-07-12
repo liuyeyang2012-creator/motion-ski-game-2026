@@ -1,0 +1,21 @@
+export interface PoseLandmark {
+  x: number
+  y: number
+  z: number
+  visibility: number
+}
+
+export interface PoseSample {
+  capturedAt: number
+  landmarks: PoseLandmark[]
+  confidence: number
+}
+
+export type PoseWorkerRequest =
+  | { type: 'init' }
+  | { type: 'detect'; id: number; bitmap: ImageBitmap; capturedAt: number }
+
+export type PoseWorkerResponse =
+  | { type: 'ready' }
+  | { type: 'result'; id: number; sample: PoseSample }
+  | { type: 'error'; message: string }
