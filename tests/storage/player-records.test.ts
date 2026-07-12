@@ -61,4 +61,9 @@ describe('player records', () => {
     saveRecords(storage, records)
     expect(loadRecords(storage)).toEqual(records)
   })
+
+  it('does not block results when storage rejects writes', () => {
+    const storage = { getItem: () => null, setItem: () => { throw new Error('quota') } }
+    expect(() => saveRecords(storage, loadRecords(storage))).not.toThrow()
+  })
 })

@@ -12,18 +12,19 @@ class FakeWorker implements WorkerPort {
 }
 
 describe('PoseClient', () => {
-  it('emits only the newest pose result', () => {
+  it('allows only one inference in flight and resumes after a result', () => {
     const worker = new FakeWorker()
     const received: PoseSample[] = []
     const client = new PoseClient(worker, (sample) => received.push(sample))
     const bitmap = {} as ImageBitmap
 
-    client.detect(bitmap, 100)
-    client.detect(bitmap, 200)
-    worker.emit(2, { capturedAt: 200, landmarks: [], confidence: 0.9 })
+    expect(client.detect(bitmap, 100)).toBe(true)
+    expect(client.detect(bitmap, 200)).toBe(false)
     worker.emit(1, { capturedAt: 100, landmarks: [], confidence: 0.9 })
+    expect(client.detect(bitmap, 200)).toBe(true)
+    worker.emit(2, { capturedAt: 200, landmarks: [], confidence: 0.9 })
 
-    expect(received.map(sample => sample.capturedAt)).toEqual([200])
+    expect(received.map(sample => sample.capturedAt)).toEqual([100, 200])
     expect(worker.postMessage).toHaveBeenCalledWith(
       { type: 'detect', id: 1, bitmap, capturedAt: 100 },
       [bitmap],

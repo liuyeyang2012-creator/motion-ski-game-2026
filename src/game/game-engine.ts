@@ -32,7 +32,7 @@ export function createGame(options: { playStyle: PlayStyle; sessionKind: Session
   return {
     ...options, status: 'playing', elapsedMs: 0, score: 0, combo: 0, bestCombo: 0,
     speed: GAME_CONFIG.baseSpeed, collisions: 0, severeCollisions: 0, distance: 0,
-    obstacles: makeObstacles(options.playStyle, options.sessionKind, options.seed), motionCounts: {},
+    obstacles: makeObstacles(options.playStyle, options.sessionKind, options.seed), motionCounts: {}, resolvedObstacleIds: [],
   }
 }
 
@@ -43,17 +43,34 @@ export function advanceGame(
   debug: { forceCollision?: boolean; forceSevereCollision?: boolean } = {},
 ): { state: GameState; events: GameEvent[] } {
   if (current.status !== 'playing') return { state: current, events: [] }
-  const state: GameState = { ...current, motionCounts: { ...current.motionCounts } }
+  const state: GameState = { ...current, motionCounts: { ...current.motionCounts }, resolvedObstacleIds: [...current.resolvedObstacleIds] }
   const events: GameEvent[] = []
   state.elapsedMs += Math.max(0, deltaMs)
   state.distance += state.speed * (Math.max(0, deltaMs) / 1000)
   for (const motion of motions) {
+    const target = state.obstacles.find(obstacle =>
+      !state.resolvedObstacleIds.includes(obstacle.id) &&
+      obstacle.requiredMotion === motion.type &&
+      obstacle.appearsAt - state.elapsedMs <= obstacle.warningLeadMs &&
+      obstacle.appearsAt - state.elapsedMs >= -200,
+    )
+    if (!target) continue
+    state.resolvedObstacleIds.push(target.id)
     state.combo += 1
     state.bestCombo = Math.max(state.bestCombo, state.combo)
     state.score += 100 * Math.max(1, state.combo)
     state.motionCounts[motion.type] = (state.motionCounts[motion.type] ?? 0) + 1
     state.speed = Math.min(GAME_CONFIG.maxSpeed, state.speed + 0.15)
     events.push({ type: 'motion', motion })
+  }
+  const missed = state.obstacles.filter(obstacle => !state.resolvedObstacleIds.includes(obstacle.id) && obstacle.appearsAt <= state.elapsedMs)
+  for (const obstacle of missed) {
+    state.resolvedObstacleIds.push(obstacle.id)
+    state.collisions += 1
+    state.combo = 0
+    state.speed = Math.max(GAME_CONFIG.baseSpeed * 0.5, state.speed * GAME_CONFIG.collisionSpeedFactor)
+    if (state.sessionKind === 'endless') state.severeCollisions += 1
+    events.push({ type: 'collision' })
   }
   if (debug.forceCollision || debug.forceSevereCollision) {
     state.collisions += 1

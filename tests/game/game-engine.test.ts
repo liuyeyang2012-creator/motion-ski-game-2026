@@ -27,4 +27,20 @@ describe('game engine', () => {
     expect(state.obstacles.some(obstacle => obstacle.requiredMotion === 'squat')).toBe(false)
     expect(state.obstacles.every(obstacle => obstacle.warningLeadMs >= 1500 && obstacle.warningLeadMs <= 2000)).toBe(true)
   })
+
+  it('rewards only a matching warned action and collides on a missed obstacle', () => {
+    let state = createGame({ playStyle: 'seated', sessionKind: 'quick', seed: 2 })
+    state.obstacles = [{ id: 1, appearsAt: 2_000, lane: 0, requiredMotion: 'duck', warningLeadMs: 1_500 }]
+    state = advanceGame(state, 700, [{ type: 'hands-up', occurredAt: 700, confidence: 0.9 }]).state
+    expect(state.score).toBe(0)
+    state = advanceGame(state, 900, [{ type: 'duck', occurredAt: 1_600, confidence: 0.9 }]).state
+    expect(state.score).toBeGreaterThan(0)
+    expect(state.collisions).toBe(0)
+
+    let missed = createGame({ playStyle: 'standing', sessionKind: 'endless', seed: 2 })
+    missed.obstacles = [{ id: 9, appearsAt: 1_000, lane: 0, requiredMotion: 'squat', warningLeadMs: 1_500 }]
+    missed = advanceGame(missed, 1_100, []).state
+    expect(missed.collisions).toBe(1)
+    expect(missed.severeCollisions).toBe(1)
+  })
 })

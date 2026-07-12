@@ -63,7 +63,7 @@ export function loadRecords(storage: RecordStorage): PlayerRecords {
 }
 
 export function saveRecords(storage: RecordStorage, records: PlayerRecords): void {
-  storage.setItem(STORAGE_KEY, JSON.stringify(records))
+  try { storage.setItem(STORAGE_KEY, JSON.stringify(records)) } catch { /* Results remain usable without persistence. */ }
 }
 
 export function recordResult(records: PlayerRecords, result: SessionResult): PlayerRecords {

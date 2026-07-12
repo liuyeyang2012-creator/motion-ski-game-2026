@@ -18,6 +18,7 @@ export class SkiRenderer {
   private context: CanvasRenderingContext2D
   private quality: QualityLevel = 'high'
   private canvas: HTMLCanvasElement
+  private frameDurations: number[] = []
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
@@ -33,6 +34,16 @@ export class SkiRenderer {
   }
 
   setQuality(level: QualityLevel): void { this.quality = level }
+  getQuality(): QualityLevel { return this.quality }
+
+  recordFrameDuration(durationMs: number): void {
+    this.frameDurations.push(durationMs)
+    if (this.frameDurations.length < 120) return
+    const average = this.frameDurations.reduce((sum, value) => sum + value, 0) / this.frameDurations.length
+    this.frameDurations = []
+    if (this.quality === 'high' && average > 20) this.quality = 'medium'
+    else if (this.quality === 'medium' && average > 28) this.quality = 'low'
+  }
 
   render(state: Readonly<GameState>): void {
     const { context: ctx } = this

@@ -29,4 +29,13 @@ describe('ski renderer', () => {
     expect(calls).toContain('background')
     expect(context.shadowBlur).toBe(0)
   })
+
+  it('degrades visual quality when the rolling frame budget is exceeded', () => {
+    const canvas = { width: 390, height: 844, getContext: () => ({ clearRect() {}, createLinearGradient: () => ({ addColorStop() {} }) }) } as unknown as HTMLCanvasElement
+    const renderer = new SkiRenderer(canvas)
+    for (let index = 0; index < 120; index++) renderer.recordFrameDuration(30)
+    expect(renderer.getQuality()).toBe('medium')
+    for (let index = 0; index < 120; index++) renderer.recordFrameDuration(30)
+    expect(renderer.getQuality()).toBe('low')
+  })
 })

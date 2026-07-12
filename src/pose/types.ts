@@ -12,7 +12,7 @@ export interface PoseSample {
 }
 
 export type PoseWorkerRequest =
-  | { type: 'init' }
+  | { type: 'init'; baseUrl: string }
   | { type: 'detect'; id: number; bitmap: ImageBitmap; capturedAt: number }
 
 export type PoseWorkerResponse =

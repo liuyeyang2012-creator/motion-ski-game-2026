@@ -8,5 +8,6 @@ export interface GameState {
   elapsedMs: number; score: number; combo: number; bestCombo: number
   speed: number; collisions: number; severeCollisions: number; distance: number
   obstacles: Obstacle[]; motionCounts: Partial<Record<MotionType, number>>
+  resolvedObstacleIds: number[]
 }
 export interface GameEvent { type: 'collision' | 'finished' | 'motion'; motion?: MotionEvent }

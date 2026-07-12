@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { renderResults, renderSetup, renderWelcome } from '../../src/ui/screens'
+import { renderResults, renderResume, renderSetup, renderWelcome } from '../../src/ui/screens'
 
 describe('game screens', () => {
   it('renders privacy-first welcome and start action', () => {
@@ -23,5 +23,11 @@ describe('game screens', () => {
     expect(root.textContent).toContain('900')
     expect(root.textContent).toContain('本次身体活动')
     expect(root.textContent).toContain('侧身 3 次')
+  })
+
+  it('offers an explicit position-confirm action after a pause', () => {
+    const root = document.createElement('section')
+    renderResume(root, '重新进入画面', vi.fn())
+    expect(root.querySelector('button')?.textContent).toContain('位置已调整好')
   })
 })
