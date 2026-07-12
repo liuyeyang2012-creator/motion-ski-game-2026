@@ -43,3 +43,5 @@ next-env.d.ts
 /public/pose_landmarker.task
 /public/vision_wasm_*.js
 /public/vision_wasm_*.wasm
+/public/assets/
+/public/index.html

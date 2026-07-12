@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build && node scripts/prepare-sites.mjs",
-    "build:hosting": "tsc && vite build --base /game/ && node scripts/stage-hosting-game.mjs && npm --prefix hosting-site run build && node scripts/stage-hosting-dist.mjs",
+    "build:hosting": "tsc && vite build --base / && node scripts/stage-hosting-game.mjs && npm --prefix hosting-site run build && node scripts/stage-hosting-dist.mjs",
     "preview": "vite preview",
     "test": "vitest",
     "test:e2e": "playwright test",
