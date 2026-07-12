@@ -12,6 +12,16 @@ import { renderMessage, renderResults, renderResume, renderSetup, renderWelcome,
 
 interface Options { root: HTMLElement; storage: Pick<Storage, 'getItem' | 'setItem'>; fixtureMode?: boolean }
 
+export function getCameraErrorCopy(error: unknown, secureContext: boolean): { title: string; body: string } {
+  if (!secureContext || !navigator.mediaDevices?.getUserMedia) {
+    return { title: '手机摄像头需要 HTTPS', body: '当前局域网地址是普通 HTTP，手机浏览器会禁用摄像头。请改用 HTTPS 测试地址。' }
+  }
+  if (error instanceof DOMException && error.name === 'NotAllowedError') {
+    return { title: '需要摄像头权限', body: '请在浏览器设置中允许摄像头，然后刷新页面重试。' }
+  }
+  return { title: '摄像头暂时不可用', body: '请关闭其他占用摄像头的应用，或改用最新版手机浏览器。' }
+}
+
 export function shouldCapturePose(calibrating: boolean, gameStatus?: GameState['status']): boolean {
   return calibrating || gameStatus === 'playing'
 }
@@ -80,8 +90,8 @@ export class AppController {
     } catch (error) {
       this.camera.stop(video)
       this.poseClient?.dispose()
-      const denied = error instanceof DOMException && error.name === 'NotAllowedError'
-      renderMessage(this.root, denied ? '需要摄像头权限' : '摄像头暂时不可用', denied ? '请在浏览器设置中允许摄像头，然后刷新页面重试。' : '请确认使用最新版手机浏览器，并关闭其他占用摄像头的应用。')
+      const copy = getCameraErrorCopy(error, window.isSecureContext)
+      renderMessage(this.root, copy.title, copy.body)
     }
   }
 

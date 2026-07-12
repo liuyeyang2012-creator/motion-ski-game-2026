@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { AppController, shouldCapturePose } from '../../src/app/app-controller'
+import { AppController, getCameraErrorCopy, shouldCapturePose } from '../../src/app/app-controller'
 
 describe('AppController', () => {
   it('moves from welcome to setup and preserves local defaults', () => {
@@ -16,5 +16,11 @@ describe('pose capture lifecycle', () => {
   it('continues inference while the game is playing after calibration', () => {
     expect(shouldCapturePose(false, 'playing')).toBe(true)
     expect(shouldCapturePose(false, 'finished')).toBe(false)
+  })
+})
+
+describe('camera errors', () => {
+  it('explains that LAN HTTP cannot use a phone camera', () => {
+    expect(getCameraErrorCopy(new TypeError('mediaDevices missing'), false).title).toBe('手机摄像头需要 HTTPS')
   })
 })

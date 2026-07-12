@@ -14,6 +14,7 @@ dist
 dist-ssr
 test-results/
 playwright-report/
+work/
 .env
 .env.*
 !.env.example
