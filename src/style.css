@@ -1,0 +1,47 @@
+:root {
+  color: #f7fbff;
+  background: #071523;
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #app { min-height: 100%; margin: 0; }
+
+body { min-width: 320px; background: #071523; }
+
+.app-shell {
+  position: relative;
+  width: min(100vw, 480px);
+  min-height: 100svh;
+  margin: 0 auto;
+  overflow: hidden;
+  background: linear-gradient(180deg, #6fc9ef 0%, #dff7ff 42%, #eefcff 100%);
+}
+
+#camera-preview,
+#game-canvas,
+#screen-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+#camera-preview { object-fit: cover; opacity: 0; pointer-events: none; }
+#game-canvas { display: block; }
+#screen-layer { z-index: 2; }
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
