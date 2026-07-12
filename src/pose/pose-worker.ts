@@ -11,9 +11,9 @@ let assetBaseUrl = self.location.origin + '/'
 async function initialize(): Promise<void> {
   if (landmarker) return
   initialization ??= (async () => {
-    const vision = await FilesetResolver.forVisionTasks(new URL('wasm', assetBaseUrl).href)
+    const vision = await FilesetResolver.forVisionTasks(new URL('.', assetBaseUrl).href)
     landmarker = await PoseLandmarker.createFromOptions(vision, {
-      baseOptions: { modelAssetPath: new URL('models/pose_landmarker.task', assetBaseUrl).href },
+      baseOptions: { modelAssetPath: new URL('pose_landmarker.task', assetBaseUrl).href },
       runningMode: 'VIDEO', numPoses: 1, outputSegmentationMasks: false,
     })
   })()

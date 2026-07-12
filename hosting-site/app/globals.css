@@ -1,0 +1,4 @@
+html, body { margin: 0; min-height: 100%; background: #071523; color: #f7fbff; font-family: system-ui, "Microsoft YaHei", sans-serif; }
+.redirect-page { min-height: 100svh; display: grid; place-content: center; gap: 12px; padding: 24px; text-align: center; }
+.redirect-page h1, .redirect-page p { margin: 0; }
+.redirect-page a { color: #73e5ff; }
