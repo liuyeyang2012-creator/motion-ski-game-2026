@@ -11,7 +11,7 @@ export interface CalibrationProfile {
 
 export type CalibrationIssue = 'not-enough-samples' | 'shoulders-not-visible' | 'hips-not-visible' | 'head-not-visible'
 export type CalibrationResult = { ok: true; profile: CalibrationProfile } | { ok: false; issue: CalibrationIssue }
-export type ActionCalibrationIssue = 'lean-left-missing' | 'lean-right-missing' | 'duck-missing' | 'hands-up-missing' | 'squat-missing' | 'reach-missing'
+export type ActionCalibrationIssue = 'pose-lost' | 'lean-left-missing' | 'lean-right-missing' | 'duck-missing' | 'hands-up-missing' | 'squat-missing' | 'reach-missing'
 
 const average = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length
 
@@ -38,6 +38,7 @@ export function buildCalibration(samples: PoseSample[], _style: PlayStyle): Cali
 }
 
 export function validateCalibrationActions(profile: CalibrationProfile, samples: PoseSample[], style: PlayStyle): { ok: true } | { ok: false; issue: ActionCalibrationIssue } {
+  if (samples.some(sample => sample.confidence < 0.6 || sample.landmarks.length < 27)) return { ok: false, issue: 'pose-lost' }
   const center = (sample: PoseSample) => (sample.landmarks[11].x + sample.landmarks[12].x + sample.landmarks[23].x + sample.landmarks[24].x) / 4
   if (!samples.slice(15, 25).some(sample => center(sample) < profile.torsoCenterX - profile.shoulderWidth * 0.2)) return { ok: false, issue: 'lean-left-missing' }
   if (!samples.slice(25, 35).some(sample => center(sample) > profile.torsoCenterX + profile.shoulderWidth * 0.2)) return { ok: false, issue: 'lean-right-missing' }

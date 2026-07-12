@@ -53,4 +53,12 @@ describe('motion calibration and detection', () => {
     if (!calibration.ok) throw new Error('calibration failed')
     expect(validateCalibrationActions(calibration.profile, samples, 'standing')).toEqual({ ok: false, issue: 'lean-left-missing' })
   })
+
+  it('retries calibration when an action sample loses the pose', () => {
+    const samples = Array.from({ length: 60 }, (_, index) => sample(index * 80))
+    samples[30] = { capturedAt: 2_400, landmarks: [], confidence: 0 }
+    const calibration = buildCalibration(samples.slice(0, 15), 'standing')
+    if (!calibration.ok) throw new Error('calibration failed')
+    expect(validateCalibrationActions(calibration.profile, samples, 'standing')).toEqual({ ok: false, issue: 'pose-lost' })
+  })
 })

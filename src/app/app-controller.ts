@@ -34,6 +34,8 @@ export class AppController {
   private lifecycle = new LifecycleMonitor(event => this.onLifecycle(event))
   private fixtureMode: boolean
   private countdownTimer = 0
+  private calibrating = false
+  private pregameInterrupted = false
 
   constructor(options: Options) { this.root = options.root; this.storage = options.storage; this.fixtureMode = options.fixtureMode ?? false }
 
@@ -52,6 +54,11 @@ export class AppController {
     const video = document.querySelector<HTMLVideoElement>('#camera-preview')
     const canvas = document.querySelector<HTMLCanvasElement>('#game-canvas')
     if (!video || !canvas) return
+    this.camera.stop(video)
+    this.poseClient?.dispose()
+    this.detector = null
+    this.calibrating = true
+    this.pregameInterrupted = false
     renderMessage(this.root, '请调整位置', this.choice.playStyle === 'standing' ? '后退一点，让肩膀、髋部和膝盖进入画面' : '坐直身体，让肩膀和髋部进入画面')
     if (this.fixtureMode) {
       this.renderer = new SkiRenderer(canvas)
@@ -121,6 +128,8 @@ export class AppController {
   }
 
   private startGame(): void {
+    if (this.pregameInterrupted) return
+    this.calibrating = false
     this.root.innerHTML = '<div class="game-hint">侧身变道 · 低头过门 · 抬手加速</div>'
     this.game = createGame({ ...this.choice, seed: Date.now() })
     if (this.fixtureMode && this.choice.sessionKind === 'quick') {
@@ -158,11 +167,18 @@ export class AppController {
       document.body.classList.add('landscape-blocked')
       window.clearTimeout(this.countdownTimer); cancelAnimationFrame(this.captureFrame); this.camera.pause()
       if (this.game) this.pauseForReposition('请将手机旋转为竖屏')
-      else this.samples = []
+      else if (this.calibrating) {
+        this.pregameInterrupted = true
+        this.calibrating = false
+        this.samples = []
+        const video = document.querySelector<HTMLVideoElement>('#camera-preview')
+        this.camera.stop(video ?? undefined)
+        this.poseClient?.dispose(); this.poseClient = null; this.detector = null
+      }
     }
     if (event === 'portrait') {
       document.body.classList.remove('landscape-blocked')
-      if (!this.game && this.root.textContent?.includes('动作校准')) this.showSetup()
+      if (!this.game && this.pregameInterrupted) { this.pregameInterrupted = false; this.showSetup() }
     }
     if (event === 'rest-due') {
       const notice = document.createElement('div')

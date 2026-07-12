@@ -52,4 +52,13 @@ describe('game engine', () => {
     expect(state.playerLane).toBe(-1)
     expect(state.collisions).toBe(0)
   })
+
+  it('does not score an unrelated action for an already-safe lane obstacle', () => {
+    let state = createGame({ playStyle: 'seated', sessionKind: 'quick', seed: 3 })
+    state.playerLane = -1
+    state.obstacles = [{ id: 8, appearsAt: 1_000, lane: 0, requiredMotion: 'lean-left', warningLeadMs: 1_500 }]
+    state = advanceGame(state, 700, [{ type: 'duck', occurredAt: 700, confidence: 0.9 }]).state
+    expect(state.score).toBe(0)
+    expect(state.resolvedObstacleIds).not.toContain(8)
+  })
 })

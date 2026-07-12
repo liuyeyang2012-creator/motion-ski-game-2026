@@ -52,7 +52,9 @@ export function advanceGame(
     if (motion.type === 'lean-right') state.playerLane = Math.min(1, state.playerLane + 1) as -1 | 0 | 1
     const target = state.obstacles.find(obstacle =>
       !state.resolvedObstacleIds.includes(obstacle.id) &&
-      ((obstacle.requiredMotion.startsWith('lean-') && obstacle.lane !== state.playerLane) || obstacle.requiredMotion === motion.type) &&
+      (obstacle.requiredMotion.startsWith('lean-')
+        ? motion.type.startsWith('lean-') && obstacle.lane !== state.playerLane
+        : obstacle.requiredMotion === motion.type) &&
       obstacle.appearsAt - state.elapsedMs <= obstacle.warningLeadMs &&
       obstacle.appearsAt - state.elapsedMs >= -200,
     )
