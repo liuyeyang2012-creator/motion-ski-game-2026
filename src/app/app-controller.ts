@@ -4,6 +4,7 @@ import type { GameState } from '../game/types'
 import { buildCalibration } from '../motion/calibration'
 import { MotionDetector, type MotionEvent } from '../motion/motion-detector'
 import { PoseClient } from '../pose/pose-client'
+import { LifecycleMonitor, type LifecycleEvent } from '../platform/lifecycle'
 import type { PoseSample } from '../pose/types'
 import { SkiRenderer } from '../render/ski-renderer'
 import { loadRecords, recordResult, saveRecords } from '../storage/player-records'
@@ -25,10 +26,12 @@ export class AppController {
   private frame = 0
   private lastFrame = 0
   private lastInference = 0
+  private lifecycle = new LifecycleMonitor(event => this.onLifecycle(event))
 
   constructor(options: Options) { this.root = options.root; this.storage = options.storage }
 
   start(): void {
+    this.lifecycle.attach()
     const records = loadRecords(this.storage)
     this.choice = { playStyle: records.lastPlayStyle, sessionKind: records.lastSessionKind }
     renderWelcome(this.root, () => this.showSetup())
@@ -100,12 +103,33 @@ export class AppController {
   private gameLoop(time: number): void {
     if (!this.game || !this.renderer) return
     const delta = Math.min(50, time - this.lastFrame)
+    this.lifecycle.addActiveTime(delta)
     this.lastFrame = time
     const result = advanceGame(this.game, delta, this.pendingMotions.splice(0))
     this.game = result.state
     this.renderer.render(this.game)
     if (this.game.status === 'finished') { this.finishGame(); return }
     this.frame = requestAnimationFrame(next => this.gameLoop(next))
+  }
+
+  private onLifecycle(event: LifecycleEvent): void {
+    if (event === 'backgrounded' && this.game?.status === 'playing') {
+      this.game = { ...this.game, status: 'paused' }
+      cancelAnimationFrame(this.frame)
+      this.camera.pause()
+    }
+    if (event === 'foregrounded' && this.game?.status === 'paused') {
+      renderMessage(this.root, '游戏已暂停', '重新站好或坐好，返回后请重新开始本局。')
+    }
+    if (event === 'landscape') document.body.classList.add('landscape-blocked')
+    if (event === 'portrait') document.body.classList.remove('landscape-blocked')
+    if (event === 'rest-due') {
+      const notice = document.createElement('div')
+      notice.className = 'rest-notice'
+      notice.textContent = '已经活动 5 分钟，建议休息一下。'
+      notice.addEventListener('click', () => notice.remove())
+      document.body.append(notice)
+    }
   }
 
   private finishGame(): void {

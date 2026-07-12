@@ -74,6 +74,8 @@ h2 { font-size: 34px; }
 .activity { width: 100%; margin: 22px 0 12px; padding: 18px; border-radius: 20px; text-align: left; color: #eaffff; background: #0b526a; }.activity h3 { margin: 0 0 10px; }.activity p { margin: 6px 0; font-size: 14px; }
 .encourage { color: #567987; font-size: 13px; line-height: 1.6; }
 .game-hint { margin: 18px auto; width: max-content; max-width: calc(100% - 32px); padding: 10px 16px; border-radius: 999px; color: #fff; background: #082f44cc; font-size: 12px; }
+.landscape-blocked::after { content: '请将手机旋转为竖屏'; position: fixed; z-index: 99; inset: 0; display: grid; place-content: center; color: #fff; background: #061b28; font-size: 22px; font-weight: 800; }
+.rest-notice { position: fixed; z-index: 100; left: 50%; bottom: 24px; transform: translateX(-50%); width: min(330px, calc(100% - 32px)); padding: 16px; border-radius: 16px; color: #fff; background: #0b526a; box-shadow: 0 12px 35px #0018; text-align: center; cursor: pointer; }
 
 .sr-only {
   position: absolute;
