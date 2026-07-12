@@ -19,9 +19,13 @@ export class SkiRenderer {
   private quality: QualityLevel = 'high'
   private canvas: HTMLCanvasElement
   private frameDurations: number[] = []
+  private logicalWidth: number
+  private logicalHeight: number
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas
+    this.logicalWidth = canvas.width
+    this.logicalHeight = canvas.height
     const context = canvas.getContext('2d')
     if (!context) throw new Error('Canvas 2D unavailable')
     this.context = context
@@ -30,11 +34,14 @@ export class SkiRenderer {
   resize(width: number, height: number, dpr: number): void {
     this.canvas.width = Math.round(width * dpr)
     this.canvas.height = Math.round(height * dpr)
+    this.logicalWidth = width
+    this.logicalHeight = height
     this.context.setTransform(dpr, 0, 0, dpr, 0, 0)
   }
 
   setQuality(level: QualityLevel): void { this.quality = level }
   getQuality(): QualityLevel { return this.quality }
+  getViewport(): { width: number; height: number } { return { width: this.logicalWidth, height: this.logicalHeight } }
 
   recordFrameDuration(durationMs: number): void {
     this.frameDurations.push(durationMs)
@@ -47,8 +54,8 @@ export class SkiRenderer {
 
   render(state: Readonly<GameState>): void {
     const { context: ctx } = this
-    const width = this.canvas.width
-    const height = this.canvas.height
+    const width = this.logicalWidth
+    const height = this.logicalHeight
     ctx.clearRect(0, 0, width, height)
     const sky = ctx.createLinearGradient(0, 0, 0, height)
     sky.addColorStop(0, '#50b9ea')

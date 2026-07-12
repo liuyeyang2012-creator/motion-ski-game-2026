@@ -32,7 +32,7 @@ export function createGame(options: { playStyle: PlayStyle; sessionKind: Session
   return {
     ...options, status: 'playing', elapsedMs: 0, score: 0, combo: 0, bestCombo: 0,
     speed: GAME_CONFIG.baseSpeed, collisions: 0, severeCollisions: 0, distance: 0,
-    obstacles: makeObstacles(options.playStyle, options.sessionKind, options.seed), motionCounts: {}, resolvedObstacleIds: [],
+    obstacles: makeObstacles(options.playStyle, options.sessionKind, options.seed), motionCounts: {}, resolvedObstacleIds: [], playerLane: 0,
   }
 }
 
@@ -48,9 +48,11 @@ export function advanceGame(
   state.elapsedMs += Math.max(0, deltaMs)
   state.distance += state.speed * (Math.max(0, deltaMs) / 1000)
   for (const motion of motions) {
+    if (motion.type === 'lean-left') state.playerLane = Math.max(-1, state.playerLane - 1) as -1 | 0 | 1
+    if (motion.type === 'lean-right') state.playerLane = Math.min(1, state.playerLane + 1) as -1 | 0 | 1
     const target = state.obstacles.find(obstacle =>
       !state.resolvedObstacleIds.includes(obstacle.id) &&
-      obstacle.requiredMotion === motion.type &&
+      ((obstacle.requiredMotion.startsWith('lean-') && obstacle.lane !== state.playerLane) || obstacle.requiredMotion === motion.type) &&
       obstacle.appearsAt - state.elapsedMs <= obstacle.warningLeadMs &&
       obstacle.appearsAt - state.elapsedMs >= -200,
     )
@@ -63,7 +65,9 @@ export function advanceGame(
     state.speed = Math.min(GAME_CONFIG.maxSpeed, state.speed + 0.15)
     events.push({ type: 'motion', motion })
   }
-  const missed = state.obstacles.filter(obstacle => !state.resolvedObstacleIds.includes(obstacle.id) && obstacle.appearsAt <= state.elapsedMs)
+  const due = state.obstacles.filter(obstacle => !state.resolvedObstacleIds.includes(obstacle.id) && obstacle.appearsAt <= state.elapsedMs)
+  for (const obstacle of due.filter(item => item.requiredMotion.startsWith('lean-') && item.lane !== state.playerLane)) state.resolvedObstacleIds.push(obstacle.id)
+  const missed = due.filter(obstacle => !state.resolvedObstacleIds.includes(obstacle.id))
   for (const obstacle of missed) {
     state.resolvedObstacleIds.push(obstacle.id)
     state.collisions += 1

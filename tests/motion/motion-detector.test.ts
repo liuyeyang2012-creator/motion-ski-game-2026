@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildCalibration } from '../../src/motion/calibration'
+import { buildCalibration, validateCalibrationActions } from '../../src/motion/calibration'
 import { MotionDetector } from '../../src/motion/motion-detector'
 import type { PoseSample } from '../../src/pose/types'
 
@@ -45,5 +45,12 @@ describe('motion calibration and detection', () => {
     const events = [sample(200, { 23: { y: 0.82 }, 24: { y: 0.82 } }), sample(340, { 23: { y: 0.82 }, 24: { y: 0.82 } })]
       .flatMap(value => detector.update(value))
     expect(events.map(event => event.type)).not.toContain('squat')
+  })
+
+  it('rejects motionless prompted calibration actions', () => {
+    const samples = Array.from({ length: 60 }, (_, index) => sample(index * 80))
+    const calibration = buildCalibration(samples.slice(0, 15), 'standing')
+    if (!calibration.ok) throw new Error('calibration failed')
+    expect(validateCalibrationActions(calibration.profile, samples, 'standing')).toEqual({ ok: false, issue: 'lean-left-missing' })
   })
 })

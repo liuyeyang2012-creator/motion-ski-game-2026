@@ -43,4 +43,13 @@ describe('game engine', () => {
     expect(missed.collisions).toBe(1)
     expect(missed.severeCollisions).toBe(1)
   })
+
+  it('uses player lane to avoid a lane obstacle', () => {
+    let state = createGame({ playStyle: 'seated', sessionKind: 'quick', seed: 3 })
+    state.obstacles = [{ id: 4, appearsAt: 1_000, lane: 0, requiredMotion: 'lean-left', warningLeadMs: 1_500 }]
+    state = advanceGame(state, 700, [{ type: 'lean-left', occurredAt: 700, confidence: 0.9 }]).state
+    state = advanceGame(state, 400, []).state
+    expect(state.playerLane).toBe(-1)
+    expect(state.collisions).toBe(0)
+  })
 })

@@ -38,4 +38,13 @@ describe('ski renderer', () => {
     for (let index = 0; index < 120; index++) renderer.recordFrameDuration(30)
     expect(renderer.getQuality()).toBe('low')
   })
+
+  it('keeps logical viewport dimensions after DPR resize', () => {
+    const context = { setTransform() {} } as unknown as CanvasRenderingContext2D
+    const canvas = { width: 390, height: 844, getContext: () => context } as unknown as HTMLCanvasElement
+    const renderer = new SkiRenderer(canvas)
+    renderer.resize(390, 844, 2)
+    expect(renderer.getViewport()).toEqual({ width: 390, height: 844 })
+    expect(canvas.width).toBe(780)
+  })
 })

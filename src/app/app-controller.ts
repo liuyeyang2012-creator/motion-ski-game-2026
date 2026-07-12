@@ -1,7 +1,7 @@
 import { CameraController } from '../camera/camera-controller'
 import { advanceGame, createGame } from '../game/game-engine'
 import type { GameState } from '../game/types'
-import { buildCalibration } from '../motion/calibration'
+import { buildCalibration, validateCalibrationActions } from '../motion/calibration'
 import { MotionDetector, type MotionEvent } from '../motion/motion-detector'
 import { PoseClient } from '../pose/pose-client'
 import { LifecycleMonitor, type LifecycleEvent } from '../platform/lifecycle'
@@ -33,7 +33,7 @@ export class AppController {
   private lastInference = 0
   private lifecycle = new LifecycleMonitor(event => this.onLifecycle(event))
   private fixtureMode: boolean
-  private lastReliablePoseAt = 0
+  private countdownTimer = 0
 
   constructor(options: Options) { this.root = options.root; this.storage = options.storage; this.fixtureMode = options.fixtureMode ?? false }
 
@@ -56,7 +56,7 @@ export class AppController {
     if (this.fixtureMode) {
       this.renderer = new SkiRenderer(canvas)
       this.renderer.resize(canvas.clientWidth || 390, canvas.clientHeight || 844, Math.min(devicePixelRatio || 1, 2))
-      window.setTimeout(() => this.startGame(), 50)
+      this.countdownTimer = window.setTimeout(() => this.startGame(), 50)
       return
     }
     try {
@@ -102,16 +102,21 @@ export class AppController {
         this.samples = []
         return
       }
+      const actions = validateCalibrationActions(calibration.profile, this.samples, this.choice.playStyle)
+      if (!actions.ok) {
+        renderMessage(this.root, '动作还不够清楚', '请按提示稍微加大动作幅度，我们重新校准一次。')
+        this.samples = []
+        return
+      }
       this.detector = new MotionDetector(calibration.profile, this.choice.playStyle)
       renderMessage(this.root, '校准完成', '3 · 2 · 1，准备出发！')
-      window.setTimeout(() => this.startGame(), 900)
+      this.countdownTimer = window.setTimeout(() => this.startGame(), 900)
       return
     }
     if (sample.confidence < 0.6) {
-      if (this.lastReliablePoseAt && sample.capturedAt - this.lastReliablePoseAt >= 2_000) this.pauseForReposition('请重新进入画面')
+      this.pauseForReposition('请重新进入画面')
       return
     }
-    this.lastReliablePoseAt = sample.capturedAt
     this.pendingMotions.push(...this.detector.update(sample))
   }
 
@@ -149,8 +154,16 @@ export class AppController {
   private onLifecycle(event: LifecycleEvent): void {
     if (event === 'backgrounded') this.pauseForReposition('已切换到其他应用')
     if (event === 'foregrounded' && this.game?.status === 'paused') this.showResume('重新确认位置')
-    if (event === 'landscape') { document.body.classList.add('landscape-blocked'); this.pauseForReposition('请将手机旋转为竖屏') }
-    if (event === 'portrait') document.body.classList.remove('landscape-blocked')
+    if (event === 'landscape') {
+      document.body.classList.add('landscape-blocked')
+      window.clearTimeout(this.countdownTimer); cancelAnimationFrame(this.captureFrame); this.camera.pause()
+      if (this.game) this.pauseForReposition('请将手机旋转为竖屏')
+      else this.samples = []
+    }
+    if (event === 'portrait') {
+      document.body.classList.remove('landscape-blocked')
+      if (!this.game && this.root.textContent?.includes('动作校准')) this.showSetup()
+    }
     if (event === 'rest-due') {
       const notice = document.createElement('div')
       notice.className = 'rest-notice'
@@ -180,7 +193,7 @@ export class AppController {
       if (!this.game) return
       this.root.innerHTML = '<div class="game-hint">侧身变道 · 低头过门 · 抬手加速</div>'
       this.game = { ...this.game, status: 'playing' }
-      this.lastFrame = performance.now(); this.lastReliablePoseAt = 0
+      this.lastFrame = performance.now()
       if (!this.fixtureMode && video) this.captureFrame = requestAnimationFrame(time => { void this.captureLoop(time, video) })
       this.gameFrame = requestAnimationFrame(time => this.gameLoop(time))
     }, 900)

@@ -9,5 +9,6 @@ export interface GameState {
   speed: number; collisions: number; severeCollisions: number; distance: number
   obstacles: Obstacle[]; motionCounts: Partial<Record<MotionType, number>>
   resolvedObstacleIds: number[]
+  playerLane: -1 | 0 | 1
 }
 export interface GameEvent { type: 'collision' | 'finished' | 'motion'; motion?: MotionEvent }
