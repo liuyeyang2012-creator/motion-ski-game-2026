@@ -16,6 +16,7 @@ if (typeof document !== 'undefined') {
   if (root) {
     mountShell(root)
     const screen = document.querySelector<HTMLElement>('#screen-layer')
-    if (screen) new AppController({ root: screen, storage: localStorage }).start()
+    const fixtureMode = import.meta.env.DEV && new URLSearchParams(location.search).get('poseFixture') === 'seated-quick-success'
+    if (screen) new AppController({ root: screen, storage: localStorage, fixtureMode }).start()
   }
 }

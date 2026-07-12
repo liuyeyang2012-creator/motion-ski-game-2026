@@ -10,7 +10,7 @@ import { SkiRenderer } from '../render/ski-renderer'
 import { loadRecords, recordResult, saveRecords } from '../storage/player-records'
 import { renderMessage, renderResults, renderSetup, renderWelcome, type SetupChoice } from '../ui/screens'
 
-interface Options { root: HTMLElement; storage: Pick<Storage, 'getItem' | 'setItem'> }
+interface Options { root: HTMLElement; storage: Pick<Storage, 'getItem' | 'setItem'>; fixtureMode?: boolean }
 
 export class AppController {
   private root: HTMLElement
@@ -27,8 +27,9 @@ export class AppController {
   private lastFrame = 0
   private lastInference = 0
   private lifecycle = new LifecycleMonitor(event => this.onLifecycle(event))
+  private fixtureMode: boolean
 
-  constructor(options: Options) { this.root = options.root; this.storage = options.storage }
+  constructor(options: Options) { this.root = options.root; this.storage = options.storage; this.fixtureMode = options.fixtureMode ?? false }
 
   start(): void {
     this.lifecycle.attach()
@@ -46,6 +47,11 @@ export class AppController {
     const canvas = document.querySelector<HTMLCanvasElement>('#game-canvas')
     if (!video || !canvas) return
     renderMessage(this.root, '请调整位置', this.choice.playStyle === 'standing' ? '后退一点，让肩膀、髋部和膝盖进入画面' : '坐直身体，让肩膀和髋部进入画面')
+    if (this.fixtureMode) {
+      this.renderer = new SkiRenderer(canvas)
+      window.setTimeout(() => this.startGame(), 50)
+      return
+    }
     try {
       await this.camera.start(video)
       video.style.opacity = '0.2'
@@ -95,6 +101,13 @@ export class AppController {
   private startGame(): void {
     this.root.innerHTML = '<div class="game-hint">侧身变道 · 低头过门 · 抬手加速</div>'
     this.game = createGame({ ...this.choice, seed: Date.now() })
+    if (this.fixtureMode && this.choice.sessionKind === 'quick') {
+      this.game.elapsedMs = 29_900
+      this.game.motionCounts = { 'lean-left': 3, duck: 2, 'hands-up': 1 }
+      this.game.score = 900
+      this.game.bestCombo = 7
+      this.game.distance = 320
+    }
     this.lastFrame = performance.now()
     cancelAnimationFrame(this.frame)
     this.frame = requestAnimationFrame(time => this.gameLoop(time))
