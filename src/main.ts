@@ -1,4 +1,5 @@
 import './style.css'
+import { AppController } from './app/app-controller'
 
 export function mountShell(root: Element): void {
   root.innerHTML = `
@@ -12,5 +13,9 @@ export function mountShell(root: Element): void {
 
 if (typeof document !== 'undefined') {
   const root = document.querySelector('#app')
-  if (root) mountShell(root)
+  if (root) {
+    mountShell(root)
+    const screen = document.querySelector<HTMLElement>('#screen-layer')
+    if (screen) new AppController({ root: screen, storage: localStorage }).start()
+  }
 }
