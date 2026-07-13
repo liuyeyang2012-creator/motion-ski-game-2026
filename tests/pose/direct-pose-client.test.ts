@@ -52,4 +52,32 @@ describe('createDirectPoseClient', () => {
     client.dispose()
     expect(landmarker.close).toHaveBeenCalled()
   })
+
+  it('uses explicit non-SIMD WASM and CPU delegate in compatibility mode', async () => {
+    const landmarker = { detectForVideo: vi.fn(() => ({ landmarks: [] })), close: vi.fn() }
+    const forVisionTasks = vi.fn()
+    const createFromOptions = vi.fn(async () => landmarker)
+
+    await createDirectPoseClient(
+      'https://example.test/motion-ski-game-2026/',
+      vi.fn(),
+      vi.fn(),
+      { forVisionTasks, createFromOptions },
+      { mode: 'compatibility' },
+    )
+
+    expect(forVisionTasks).not.toHaveBeenCalled()
+    expect(createFromOptions).toHaveBeenCalledWith(
+      {
+        wasmLoaderPath: 'https://example.test/motion-ski-game-2026/vision_wasm_nosimd_internal.js',
+        wasmBinaryPath: 'https://example.test/motion-ski-game-2026/vision_wasm_nosimd_internal.wasm',
+      },
+      expect.objectContaining({
+        baseOptions: {
+          modelAssetPath: 'https://example.test/motion-ski-game-2026/pose_landmarker.task',
+          delegate: 'CPU',
+        },
+      }),
+    )
+  })
 })

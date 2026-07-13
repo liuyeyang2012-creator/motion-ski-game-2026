@@ -10,10 +10,21 @@ export interface PoseLandmarkerPort {
   close(): void
 }
 
+export type PoseRuntimeMode = 'standard' | 'compatibility'
+
+export interface PoseClientOptions {
+  mode?: PoseRuntimeMode
+}
+
+interface VisionFileset {
+  wasmLoaderPath: string
+  wasmBinaryPath: string
+}
+
 interface PoseClientDependencies {
-  forVisionTasks(baseUrl: string): ReturnType<typeof FilesetResolver.forVisionTasks>
-  createFromOptions(fileset: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>, options: {
-    baseOptions: { modelAssetPath: string }
+  forVisionTasks(baseUrl: string): Promise<VisionFileset>
+  createFromOptions(fileset: VisionFileset, options: {
+    baseOptions: { modelAssetPath: string; delegate?: 'CPU' | 'GPU' }
     runningMode: 'VIDEO'
     numPoses: number
     outputSegmentationMasks: boolean
@@ -67,11 +78,21 @@ export async function createDirectPoseClient(
   onSample: (sample: PoseSample) => void,
   onError: (error: Error) => void,
   dependencies: PoseClientDependencies = defaultDependencies,
+  options: PoseClientOptions = {},
 ): Promise<DirectPoseClient> {
   const assetBaseUrl = new URL('.', baseUrl).href
-  const fileset = await dependencies.forVisionTasks(assetBaseUrl)
+  const mode = options.mode ?? 'standard'
+  const fileset = mode === 'compatibility'
+    ? {
+        wasmLoaderPath: new URL('vision_wasm_nosimd_internal.js', assetBaseUrl).href,
+        wasmBinaryPath: new URL('vision_wasm_nosimd_internal.wasm', assetBaseUrl).href,
+      }
+    : await dependencies.forVisionTasks(assetBaseUrl)
+  const modelAssetPath = new URL('pose_landmarker.task', assetBaseUrl).href
   const landmarker = await dependencies.createFromOptions(fileset, {
-    baseOptions: { modelAssetPath: new URL('pose_landmarker.task', assetBaseUrl).href },
+    baseOptions: mode === 'compatibility'
+      ? { modelAssetPath, delegate: 'CPU' }
+      : { modelAssetPath },
     runningMode: 'VIDEO',
     numPoses: 1,
     outputSegmentationMasks: false,
