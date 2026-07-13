@@ -11,6 +11,8 @@ import type { CalibrationAction, CalibrationProfile, FramingIssue } from './cali
 const ACTION_HOLD_MS = 400
 const SUCCESS_DISPLAY_MS = 450
 const POSE_LOSS_RECOVERY_MS = 1500
+// The controller targets 80 ms samples; 200 ms tolerates an occasional dropped frame without counting a suspension gap.
+const MAX_MATCHING_SAMPLE_GAP_MS = 200
 const MINIMUM_BASELINE_SAMPLES = 8
 const MINIMUM_BASELINE_SPAN_MS = 600
 
@@ -37,6 +39,7 @@ export class CalibrationSession {
   private baselineSamples: PoseSample[] = []
   private profile: CalibrationProfile | null = null
   private candidateAt: number | null = null
+  private lastMatchingAt: number | null = null
   private successAt: number | null = null
   private poseLostAt: number | null = null
   private framingIssue: FramingIssue | null = null
@@ -54,6 +57,7 @@ export class CalibrationSession {
     const framing = checkFraming(sample, this.style)
     if (!framing.ok) {
       this.candidateAt = null
+      this.lastMatchingAt = null
       this.framingIssue = framing.issue
       this.poseLostAt ??= sample.capturedAt
       if (sample.capturedAt - this.poseLostAt >= POSE_LOSS_RECOVERY_MS) this.phase = 'framing'
@@ -101,15 +105,24 @@ export class CalibrationSession {
       const action = this.actions[this.stepIndex]
       if (!matchesCalibrationAction(this.profile, sample, this.style, action)) {
         this.candidateAt = null
+        this.lastMatchingAt = null
         return this.snapshot()
       }
 
-      this.candidateAt ??= sample.capturedAt
+      if (
+        this.candidateAt === null
+        || this.lastMatchingAt === null
+        || sample.capturedAt - this.lastMatchingAt > MAX_MATCHING_SAMPLE_GAP_MS
+      ) {
+        this.candidateAt = sample.capturedAt
+      }
+      this.lastMatchingAt = sample.capturedAt
       if (sample.capturedAt - this.candidateAt >= ACTION_HOLD_MS) {
         this.phase = 'step-success'
         this.completedSteps = this.stepIndex + 1
         this.successAt = sample.capturedAt
         this.candidateAt = null
+        this.lastMatchingAt = null
       }
     }
 

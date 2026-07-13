@@ -47,8 +47,7 @@ function createSeatedFixtureSamples(): PoseSample[] {
     return { capturedAt, landmarks, confidence: 0.95 }
   }
   const action = (start: number, changes: Record<number, Partial<{ x: number; y: number }>>) => [
-    sample(start, changes),
-    sample(start + 400, changes),
+    ...Array.from({ length: 6 }, (_, index) => sample(start + index * 80, changes)),
     sample(start + 850),
   ]
 

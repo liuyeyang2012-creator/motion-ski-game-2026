@@ -14,11 +14,30 @@ describe('CalibrationSession', () => {
 
   it('confirms an action only after 400 ms of continuous matching', () => {
     const session = readyHalfBodySession()
-    session.update(leftLean(1000))
-    session.update(leftLean(1320))
+    for (let time = 1000; time <= 1320; time += 80) session.update(leftLean(time))
     expect(session.snapshot().phase).toBe('action')
     session.update(leftLean(1400))
     expect(session.snapshot().phase).toBe('step-success')
+  })
+
+  it('restarts the hold after a large gap between matching samples', () => {
+    const session = readyHalfBodySession()
+    session.update(leftLean(1000))
+    session.update(leftLean(5000))
+    expect(session.snapshot()).toMatchObject({ phase: 'action', stepIndex: 0, holdProgress: 0 })
+
+    for (let time = 5080; time <= 5400; time += 80) session.update(leftLean(time))
+    expect(session.snapshot().phase).toBe('step-success')
+  })
+
+  it('keeps completed steps after background suspension and requires the current step afresh', () => {
+    const session = sessionWithFirstStepCompleted()
+    session.update(rightLean(1730))
+    session.update(rightLean(6000))
+    expect(session.snapshot()).toMatchObject({ phase: 'action', stepIndex: 1, completedSteps: 1, holdProgress: 0 })
+
+    for (let time = 6080; time <= 6400; time += 80) session.update(rightLean(time))
+    expect(session.snapshot()).toMatchObject({ phase: 'step-success', stepIndex: 1, completedSteps: 2 })
   })
 
   it('keeps completed steps after pose loss longer than 1500 ms', () => {
@@ -86,6 +105,10 @@ function readyHalfBodySession(): CalibrationSession {
 
 function leftLean(time: number) {
   return poseSample(time, { changes: { 11: { x: 0.3 }, 12: { x: 0.5 } } })
+}
+
+function rightLean(time: number) {
+  return poseSample(time, { changes: { 11: { x: 0.5 }, 12: { x: 0.7 } } })
 }
 
 function sessionWithFirstStepCompleted(): CalibrationSession {

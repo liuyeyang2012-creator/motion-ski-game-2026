@@ -39,6 +39,38 @@ describe('mode-specific calibration', () => {
     expect(matchesCalibrationAction(standing.profile, poseSample(1, { changes: { 23: { y: 0.76 }, 24: { y: 0.76 } } }), 'standing', 'squat')).toBe(true)
   })
 
+  it.each([0.35, 0.4, 0.5])('accepts realistic bilateral reach at shoulder width %s', shoulderWidth => {
+    const leftShoulderX = 0.5 - shoulderWidth / 2
+    const rightShoulderX = 0.5 + shoulderWidth / 2
+    const calibration = buildCalibration([poseSample(0, {
+      changes: { 11: { x: leftShoulderX }, 12: { x: rightShoulderX } },
+    })], 'seated')
+    if (!calibration.ok) throw new Error('calibration failed')
+
+    expect(matchesCalibrationAction(calibration.profile, poseSample(1, {
+      changes: {
+        11: { x: leftShoulderX },
+        12: { x: rightShoulderX },
+        15: { x: 0.5 - shoulderWidth * 0.8 },
+        16: { x: 0.5 + shoulderWidth * 0.8 },
+      },
+    }), 'seated', 'reach')).toBe(true)
+  })
+
+  it('rejects one-arm reach and bilateral reach with insufficient span', () => {
+    const calibration = buildCalibration([poseSample(0, {
+      changes: { 11: { x: 0.3 }, 12: { x: 0.7 } },
+    })], 'seated')
+    if (!calibration.ok) throw new Error('calibration failed')
+
+    expect(matchesCalibrationAction(calibration.profile, poseSample(1, {
+      changes: { 11: { x: 0.3 }, 12: { x: 0.7 }, 15: { x: 0.18 }, 16: { x: 0.7 } },
+    }), 'seated', 'reach')).toBe(false)
+    expect(matchesCalibrationAction(calibration.profile, poseSample(2, {
+      changes: { 11: { x: 0.3 }, 12: { x: 0.7 }, 15: { x: 0.28 }, 16: { x: 0.72 } },
+    }), 'seated', 'reach')).toBe(false)
+  })
+
   it('does not match an action when its required landmark is unavailable', () => {
     const calibration = buildCalibration([poseSample(0)], 'seated')
     if (!calibration.ok) throw new Error('calibration failed')
