@@ -19,8 +19,8 @@ const framingInstructions: Record<FramingIssue, string> = {
 }
 
 export function getCalibrationInstruction(snapshot: CalibrationSnapshot): string {
-  if (snapshot.framingIssue) return framingInstructions[snapshot.framingIssue]
   if (snapshot.phase === 'step-success') return '校准成功'
+  if (snapshot.framingIssue) return framingInstructions[snapshot.framingIssue]
   if (snapshot.action) return actionInstructions[snapshot.action]
   if (snapshot.phase === 'baseline') return '保持自然姿势'
   if (snapshot.phase === 'complete') return '准备完成'

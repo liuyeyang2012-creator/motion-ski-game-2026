@@ -65,4 +65,15 @@ describe('calibration view', () => {
     expect(root.textContent).not.toContain('✓')
     expect(root.textContent).not.toContain('校准成功')
   })
+
+  it('keeps the success instruction when framing is lost during step success', () => {
+    const value = snapshot({ phase: 'step-success', completedSteps: 2, holdProgress: 0, framingIssue: 'pose-lost' })
+    const root = document.createElement('section')
+
+    renderCalibration(root, value)
+
+    expect(getCalibrationInstruction(value)).toBe('校准成功')
+    expect(root.querySelector('.calibration-instruction')?.textContent).toBe('校准成功')
+    expect(root.textContent).not.toContain('请回到高亮框中央')
+  })
 })
