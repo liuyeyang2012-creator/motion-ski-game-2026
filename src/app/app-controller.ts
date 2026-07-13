@@ -1,7 +1,13 @@
 import { CameraController } from '../camera/camera-controller'
 import { advanceGame, createGame } from '../game/game-engine'
 import type { GameState } from '../game/types'
-import { buildCalibration, validateCalibrationActions } from '../motion/calibration'
+import {
+  buildCalibration,
+  CALIBRATION_SAMPLES_PER_STEP,
+  CALIBRATION_TOTAL_SAMPLES,
+  getCalibrationPrompt,
+  validateCalibrationActions,
+} from '../motion/calibration'
 import { MotionDetector, type MotionEvent } from '../motion/motion-detector'
 import { createDirectPoseClient, DirectPoseClient } from '../pose/direct-pose-client'
 import { LifecycleMonitor, type LifecycleEvent } from '../platform/lifecycle'
@@ -115,10 +121,12 @@ export class AppController {
   private onPose(sample: PoseSample): void {
     if (!this.detector) {
       this.samples.push(sample)
-      const prompts: Record<number, string> = { 15: '请轻轻向左侧身', 25: '很好，再向右侧身', 35: '轻轻低头', 45: '抬起双手', 55: this.choice.playStyle === 'standing' ? '最后，缓慢下蹲' : '最后，向两侧伸展手臂' }
-      if (prompts[this.samples.length]) renderMessage(this.root, '动作校准', prompts[this.samples.length])
-      if (this.samples.length < 60) return
-      const calibration = buildCalibration(this.samples.slice(0, 15), this.choice.playStyle)
+      if (this.samples.length >= CALIBRATION_SAMPLES_PER_STEP && this.samples.length % CALIBRATION_SAMPLES_PER_STEP === 0) {
+        const prompt = getCalibrationPrompt(this.samples.length, this.choice.playStyle)
+        if (prompt) renderMessage(this.root, '动作校准', prompt)
+      }
+      if (this.samples.length < CALIBRATION_TOTAL_SAMPLES) return
+      const calibration = buildCalibration(this.samples.slice(0, CALIBRATION_SAMPLES_PER_STEP), this.choice.playStyle)
       if (!calibration.ok) {
         const copy = calibration.issue === 'hips-not-visible' ? '请后退一点，让肩膀和髋部进入画面' : '请保持身体稳定，并改善环境光'
         renderMessage(this.root, '还差一点', copy)
