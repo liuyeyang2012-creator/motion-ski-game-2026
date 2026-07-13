@@ -53,6 +53,29 @@ describe('CalibrationSession', () => {
     for (let time = 1600; time <= 2080; time += 80) session.update(poseSample(time))
     expect(session.snapshot()).toMatchObject({ phase: 'action', stepIndex: 0, completedSteps: 0 })
   })
+
+  it('rejects a centered-looking upper body that is shifted left of the guide frame', () => {
+    const session = new CalibrationSession('seated')
+    const shiftedLeft = (time: number) => poseSample(time, {
+      hidden: [23, 24, 25, 26],
+      changes: { 0: { x: 0.4 }, 11: { x: 0.3 }, 12: { x: 0.5 } },
+    })
+    for (let time = 0; time <= 800; time += 80) session.update(shiftedLeft(time))
+    expect(session.snapshot()).toMatchObject({ phase: 'baseline', profile: null })
+
+    for (let time = 880; time <= 1520; time += 80) {
+      session.update(poseSample(time, { hidden: [23, 24, 25, 26] }))
+    }
+    expect(session.snapshot()).toMatchObject({ phase: 'action', stepIndex: 0 })
+    expect(session.snapshot().profile?.torsoCenterX).toBe(0.5)
+  })
+
+  it('accepts centered full-body samples as neutral baseline', () => {
+    const session = new CalibrationSession('standing')
+    for (let time = 0; time <= 640; time += 80) session.update(poseSample(time))
+    expect(session.snapshot()).toMatchObject({ phase: 'action', stepIndex: 0 })
+    expect(session.snapshot().profile).not.toBeNull()
+  })
 })
 
 function readyHalfBodySession(): CalibrationSession {

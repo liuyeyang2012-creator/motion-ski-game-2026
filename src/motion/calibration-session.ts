@@ -159,13 +159,14 @@ function isNeutralSample(sample: PoseSample, style: PlayStyle): boolean {
 
   const shoulderCenterX = (leftShoulder.x + rightShoulder.x) / 2
   const shoulderCenterY = (leftShoulder.y + rightShoulder.y) / 2
+  const centeredInGuide = Math.abs(shoulderCenterX - 0.5) <= shoulderWidth * 0.3
   const alignedWithHead = Math.abs(head.x - shoulderCenterX) <= shoulderWidth * 0.3
   const headAboveShoulders = head.y <= shoulderCenterY - shoulderWidth * 0.6
   const handsAtRest = leftWrist.y > leftShoulder.y
     && rightWrist.y > rightShoulder.y
     && leftWrist.x >= leftShoulder.x - shoulderWidth * 0.75
     && rightWrist.x <= rightShoulder.x + shoulderWidth * 0.75
-  if (!alignedWithHead || !headAboveShoulders || !handsAtRest) return false
+  if (!centeredInGuide || !alignedWithHead || !headAboveShoulders || !handsAtRest) return false
 
   const leftHip = sample.landmarks[23]
   const rightHip = sample.landmarks[24]
