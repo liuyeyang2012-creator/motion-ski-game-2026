@@ -1,8 +1,42 @@
 import { describe, expect, it } from 'vitest'
-import { buildCalibration, checkFraming, getCalibrationActions, matchesCalibrationAction } from '../../src/motion/calibration'
+import { assessCalibrationAction, buildCalibration, checkFraming, getCalibrationActions, matchesCalibrationAction } from '../../src/motion/calibration'
 import { poseSample } from '../support/pose-sample'
 
 describe('mode-specific calibration', () => {
+  it('ignores hidden legs and hands in the seated baseline', () => {
+    const samples = [0, 80, 160, 240, 320].map(time => poseSample(time, {
+      hidden: [15, 16, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32],
+    }))
+
+    expect(buildCalibration(samples, 'seated').ok).toBe(true)
+  })
+
+  it('uses a median baseline instead of an outlier-sensitive average', () => {
+    const samples = [0.49, 0.5, 0.51, 0.5, 0.9].map((center, index) => poseSample(index * 80, {
+      changes: { 11: { x: center - 0.1 }, 12: { x: center + 0.1 } },
+    }))
+    const result = buildCalibration(samples, 'seated')
+    if (!result.ok) throw new Error('calibration failed')
+
+    expect(result.profile.torsoCenterX).toBeCloseTo(0.5)
+  })
+
+  it('asks for only the missing hand during hands-up', () => {
+    const calibration = buildCalibration([poseSample(0)], 'seated')
+    if (!calibration.ok) throw new Error('calibration failed')
+
+    expect(assessCalibrationAction(
+      calibration.profile,
+      poseSample(80, { hidden: [15] }),
+      'seated',
+      'hands-up',
+    )).toMatchObject({
+      ok: false,
+      feedback: 'left-hand-missing',
+      requiredIndices: [11, 12, 15, 16],
+    })
+  })
+
   it('accepts half-body framing when hips and knees are absent', () => {
     const sample = poseSample(0, { hidden: [23, 24, 25, 26] })
     expect(checkFraming(sample, 'seated')).toEqual({ ok: true })

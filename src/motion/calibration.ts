@@ -1,4 +1,5 @@
 import type { PlayStyle } from '../app/types'
+import { assessLandmarks, landmarkIsUsable } from '../pose/pose-quality'
 import type { PoseSample } from '../pose/types'
 
 export type CalibrationAction = 'lean-left' | 'lean-right' | 'duck' | 'hands-up' | 'reach' | 'squat'
@@ -17,6 +18,29 @@ export interface CalibrationProfile {
 export type CalibrationIssue = 'not-enough-samples' | 'shoulders-not-visible' | 'hips-not-visible' | 'head-not-visible'
 export type CalibrationResult = { ok: true; profile: CalibrationProfile } | { ok: false; issue: CalibrationIssue }
 export type ActionCalibrationIssue = 'pose-lost' | 'lean-left-missing' | 'lean-right-missing' | 'duck-missing' | 'hands-up-missing' | 'squat-missing' | 'reach-missing'
+export type CalibrationFeedbackCode =
+  | 'body-not-found'
+  | 'head-missing'
+  | 'shoulders-missing'
+  | 'left-hand-missing'
+  | 'right-hand-missing'
+  | 'hips-missing'
+  | 'knees-missing'
+  | 'move-left'
+  | 'move-right'
+  | 'lower-head'
+  | 'raise-left-hand'
+  | 'raise-right-hand'
+  | 'spread-hands'
+  | 'lower-hips'
+  | 'hold'
+
+export interface CalibrationAssessment {
+  ok: boolean
+  feedback: CalibrationFeedbackCode
+  requiredIndices: readonly number[]
+  confidence: number
+}
 
 export const CALIBRATION_SAMPLES_PER_STEP = 25
 export const CALIBRATION_TOTAL_SAMPLES = CALIBRATION_SAMPLES_PER_STEP * 6
@@ -36,15 +60,28 @@ export function getCalibrationPrompt(sampleCount: number, style: PlayStyle): str
   return prompt ? `第 ${actionIndex + 1}/5 步 · ${prompt}` : null
 }
 
-const average = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / values.length
-const isVisible = (sample: PoseSample, index: number) => (sample.landmarks[index]?.visibility ?? 0) >= 0.6
+const median = (values: number[]): number => {
+  const sorted = [...values].sort((left, right) => left - right)
+  const middle = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle]
+}
+const isVisible = (sample: PoseSample, index: number) => landmarkIsUsable(sample, index)
+
+export function requiredLandmarksFor(style: PlayStyle, action: CalibrationAction | null): readonly number[] {
+  if (action === 'duck') return [0, 11, 12]
+  if (action === 'hands-up' || action === 'reach') return [11, 12, 15, 16]
+  if (action === 'squat') return [23, 24, 25, 26]
+  if (action === 'lean-left' || action === 'lean-right') {
+    return style === 'standing' ? [11, 12, 23, 24] : [11, 12]
+  }
+  return style === 'standing' ? [0, 11, 12, 23, 24] : [0, 11, 12]
+}
 
 export function checkFraming(sample: PoseSample, style: PlayStyle): FramingResult {
   if (sample.landmarks.length === 0) return { ok: false, issue: 'pose-lost' }
   if (!isVisible(sample, 0)) return { ok: false, issue: 'head-not-visible' }
   if (!isVisible(sample, 11) || !isVisible(sample, 12)) return { ok: false, issue: 'shoulders-not-visible' }
-  if (!isVisible(sample, 15) || !isVisible(sample, 16)) return { ok: false, issue: 'hands-not-visible' }
-  if (style === 'standing' && !([23, 24, 25, 26] as const).every(index => isVisible(sample, index))) {
+  if (style === 'standing' && (!isVisible(sample, 23) || !isVisible(sample, 24))) {
     return { ok: false, issue: 'lower-body-not-visible' }
   }
   return { ok: true }
@@ -53,59 +90,102 @@ export function checkFraming(sample: PoseSample, style: PlayStyle): FramingResul
 export function buildCalibration(samples: PoseSample[], style: PlayStyle): CalibrationResult {
   if (samples.length === 0) return { ok: false, issue: 'not-enough-samples' }
   const shouldersVisible = (sample: PoseSample) => isVisible(sample, 11) && isVisible(sample, 12)
-  const lowerBodyVisible = (sample: PoseSample) => ([23, 24, 25, 26] as const).every(index => isVisible(sample, index))
+  const hipsVisible = (sample: PoseSample) => isVisible(sample, 23) && isVisible(sample, 24)
   const headVisible = (sample: PoseSample) => isVisible(sample, 0)
   const minimumUsable = Math.ceil(samples.length * 0.6)
   if (samples.filter(shouldersVisible).length < minimumUsable) return { ok: false, issue: 'shoulders-not-visible' }
-  if (style === 'standing' && samples.filter(lowerBodyVisible).length < minimumUsable) return { ok: false, issue: 'hips-not-visible' }
+  if (style === 'standing' && samples.filter(hipsVisible).length < minimumUsable) return { ok: false, issue: 'hips-not-visible' }
   if (samples.filter(headVisible).length < minimumUsable) return { ok: false, issue: 'head-not-visible' }
   const usableSamples = samples.filter(sample => checkFraming(sample, style).ok)
   if (usableSamples.length < minimumUsable) return { ok: false, issue: 'not-enough-samples' }
 
   const standing = style === 'standing'
+  const shoulderWidths = usableSamples.map(sample => Math.abs(sample.landmarks[12].x - sample.landmarks[11].x))
   return {
     ok: true,
     profile: {
-      shoulderWidth: average(usableSamples.map(sample => Math.abs(sample.landmarks[12].x - sample.landmarks[11].x))),
-      torsoCenterX: average(usableSamples.map(sample => standing
+      shoulderWidth: median(shoulderWidths),
+      torsoCenterX: median(usableSamples.map(sample => standing
         ? (sample.landmarks[11].x + sample.landmarks[12].x + sample.landmarks[23].x + sample.landmarks[24].x) / 4
         : (sample.landmarks[11].x + sample.landmarks[12].x) / 2)),
-      headY: average(usableSamples.map(sample => sample.landmarks[0].y)),
-      wristY: average(usableSamples.map(sample => (sample.landmarks[15].y + sample.landmarks[16].y) / 2)),
-      hipY: standing ? average(usableSamples.map(sample => (sample.landmarks[23].y + sample.landmarks[24].y) / 2)) : null,
-      kneeY: standing ? average(usableSamples.map(sample => (sample.landmarks[25].y + sample.landmarks[26].y) / 2)) : null,
+      headY: median(usableSamples.map(sample => sample.landmarks[0].y)),
+      wristY: median(usableSamples.map(sample => isVisible(sample, 15) && isVisible(sample, 16)
+        ? (sample.landmarks[15].y + sample.landmarks[16].y) / 2
+        : (sample.landmarks[11].y + sample.landmarks[12].y) / 2
+          + Math.abs(sample.landmarks[12].x - sample.landmarks[11].x))),
+      hipY: standing ? median(usableSamples.map(sample => (sample.landmarks[23].y + sample.landmarks[24].y) / 2)) : null,
+      kneeY: standing && usableSamples.some(sample => isVisible(sample, 25) && isVisible(sample, 26))
+        ? median(usableSamples
+          .filter(sample => isVisible(sample, 25) && isVisible(sample, 26))
+          .map(sample => (sample.landmarks[25].y + sample.landmarks[26].y) / 2))
+        : null,
     },
   }
 }
 
-export function matchesCalibrationAction(profile: CalibrationProfile, sample: PoseSample, style: PlayStyle, action: CalibrationAction): boolean {
-  if (sample.landmarks.length === 0 || !getCalibrationActions(style).includes(action)) return false
-  const required = action === 'duck'
-    ? [0]
-    : action === 'hands-up' || action === 'reach'
-      ? [11, 12, 15, 16]
-      : action === 'squat'
-        ? [23, 24]
-        : style === 'standing'
-          ? [11, 12, 23, 24]
-          : [11, 12]
-  if (!required.every(index => isVisible(sample, index))) return false
+export function assessCalibrationAction(
+  profile: CalibrationProfile,
+  sample: PoseSample,
+  style: PlayStyle,
+  action: CalibrationAction,
+): CalibrationAssessment {
+  const requiredIndices = requiredLandmarksFor(style, action)
+  if (sample.landmarks.length === 0 || !getCalibrationActions(style).includes(action)) {
+    return { ok: false, feedback: 'body-not-found', requiredIndices, confidence: 0 }
+  }
+  const quality = assessLandmarks(sample, requiredIndices)
+  if (!quality.ok) {
+    const firstMissing = quality.missing[0]
+    const feedback: CalibrationFeedbackCode = firstMissing === 0
+      ? 'head-missing'
+      : firstMissing === 11 || firstMissing === 12
+        ? 'shoulders-missing'
+        : firstMissing === 15
+          ? 'left-hand-missing'
+          : firstMissing === 16
+            ? 'right-hand-missing'
+            : firstMissing === 23 || firstMissing === 24
+              ? 'hips-missing'
+              : 'knees-missing'
+    return { ok: false, feedback, requiredIndices, confidence: 0 }
+  }
 
   const shoulderCenterX = (sample.landmarks[11]?.x + sample.landmarks[12]?.x) / 2
   const torsoCenterX = style === 'standing'
     ? (sample.landmarks[11].x + sample.landmarks[12].x + sample.landmarks[23].x + sample.landmarks[24].x) / 4
     : shoulderCenterX
-  if (action === 'lean-left') return torsoCenterX < profile.torsoCenterX - profile.shoulderWidth * 0.2
-  if (action === 'lean-right') return torsoCenterX > profile.torsoCenterX + profile.shoulderWidth * 0.2
-  if (action === 'duck') return sample.landmarks[0].y > profile.headY + profile.shoulderWidth * 0.2
-  if (action === 'hands-up') return sample.landmarks[15].y < sample.landmarks[11].y && sample.landmarks[16].y < sample.landmarks[12].y
-  if (action === 'reach') {
+  let ok = false
+  let feedback: CalibrationFeedbackCode
+  if (action === 'lean-left') {
+    ok = torsoCenterX < profile.torsoCenterX - profile.shoulderWidth * 0.2
+    feedback = ok ? 'hold' : 'move-left'
+  } else if (action === 'lean-right') {
+    ok = torsoCenterX > profile.torsoCenterX + profile.shoulderWidth * 0.2
+    feedback = ok ? 'hold' : 'move-right'
+  } else if (action === 'duck') {
+    ok = sample.landmarks[0].y > profile.headY + profile.shoulderWidth * 0.2
+    feedback = ok ? 'hold' : 'lower-head'
+  } else if (action === 'hands-up') {
+    const leftRaised = sample.landmarks[15].y < sample.landmarks[11].y
+    const rightRaised = sample.landmarks[16].y < sample.landmarks[12].y
+    ok = leftRaised && rightRaised
+    feedback = ok ? 'hold' : !leftRaised ? 'raise-left-hand' : 'raise-right-hand'
+  } else if (action === 'reach') {
     const wristSpan = sample.landmarks[16].x - sample.landmarks[15].x
-    return sample.landmarks[15].x < sample.landmarks[11].x
+    ok = sample.landmarks[15].x < sample.landmarks[11].x
       && sample.landmarks[16].x > sample.landmarks[12].x
       && wristSpan >= profile.shoulderWidth * 1.5
+    feedback = ok ? 'hold' : 'spread-hands'
+  } else {
+    ok = profile.hipY !== null
+      && (sample.landmarks[23].y + sample.landmarks[24].y) / 2 > profile.hipY + profile.shoulderWidth * 0.25
+    feedback = ok ? 'hold' : 'lower-hips'
   }
-  return profile.hipY !== null && (sample.landmarks[23].y + sample.landmarks[24].y) / 2 > profile.hipY + profile.shoulderWidth * 0.25
+  return { ok, feedback, requiredIndices, confidence: quality.confidence }
+}
+
+export function matchesCalibrationAction(profile: CalibrationProfile, sample: PoseSample, style: PlayStyle, action: CalibrationAction): boolean {
+  return assessCalibrationAction(profile, sample, style, action).ok
 }
 
 export function validateCalibrationActions(profile: CalibrationProfile, samples: PoseSample[], style: PlayStyle): { ok: true } | { ok: false; issue: ActionCalibrationIssue } {
@@ -124,7 +204,7 @@ export function validateCalibrationActions(profile: CalibrationProfile, samples:
     squat: 'squat-missing',
   }
   for (const [index, action] of actions.entries()) {
-    if (!actionSamples(index).some(sample => matchesCalibrationAction(profile, sample, style, action))) {
+    if (!actionSamples(index).some(sample => assessCalibrationAction(profile, sample, style, action).ok)) {
       return { ok: false, issue: issues[action] }
     }
   }
