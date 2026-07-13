@@ -3,7 +3,7 @@ import { advanceGame, createGame } from '../game/game-engine'
 import type { GameState } from '../game/types'
 import { buildCalibration, validateCalibrationActions } from '../motion/calibration'
 import { MotionDetector, type MotionEvent } from '../motion/motion-detector'
-import { PoseClient } from '../pose/pose-client'
+import { createDirectPoseClient, DirectPoseClient } from '../pose/direct-pose-client'
 import { LifecycleMonitor, type LifecycleEvent } from '../platform/lifecycle'
 import type { PoseSample } from '../pose/types'
 import { SkiRenderer } from '../render/ski-renderer'
@@ -34,7 +34,7 @@ export class AppController {
   private detector: MotionDetector | null = null
   private game: GameState | null = null
   private renderer: SkiRenderer | null = null
-  private poseClient: PoseClient | null = null
+  private poseClient: DirectPoseClient | null = null
   private choice: SetupChoice = { playStyle: 'seated', sessionKind: 'quick' }
   private pendingMotions: MotionEvent[] = []
   private captureFrame = 0
@@ -78,29 +78,35 @@ export class AppController {
     }
     try {
       await this.camera.start(video)
-      video.style.opacity = '0.2'
-      const worker = new Worker(new URL('../pose/pose-worker.ts', import.meta.url), { type: 'module' })
-      this.poseClient = new PoseClient(worker, sample => this.onPose(sample))
-      this.poseClient.start()
+    } catch (error) {
+      this.camera.stop(video)
+      const copy = getCameraErrorCopy(error, window.isSecureContext)
+      renderMessage(this.root, copy.title, copy.body)
+      return
+    }
+    video.style.opacity = '0.2'
+    try {
+      renderMessage(this.root, '正在启动体感识别', '第一次载入可能需要几秒，请保持在画面中央')
+      this.poseClient = await createDirectPoseClient(
+        document.baseURI,
+        sample => this.onPose(sample),
+        () => this.stopCalibrationWithError('体感识别遇到问题，请刷新页面后重试'),
+      )
       this.renderer = new SkiRenderer(canvas)
       this.renderer.resize(canvas.clientWidth || 390, canvas.clientHeight || 844, Math.min(devicePixelRatio || 1, 2))
       this.samples = []
       this.lastInference = 0
       this.captureFrame = requestAnimationFrame(time => this.captureLoop(time, video))
-    } catch (error) {
-      this.camera.stop(video)
-      this.poseClient?.dispose()
-      const copy = getCameraErrorCopy(error, window.isSecureContext)
-      renderMessage(this.root, copy.title, copy.body)
+    } catch {
+      this.stopCalibrationWithError('识别组件加载失败，请检查网络后刷新页面重试')
     }
   }
 
   private async captureLoop(time: number, video: HTMLVideoElement): Promise<void> {
-    if (shouldCapturePose(!this.detector && this.samples.length < 60, this.game?.status)) {
+    if (shouldCapturePose(this.calibrating && !this.detector, this.game?.status)) {
       if (time - this.lastInference >= 80 && video.readyState >= 2) {
         this.lastInference = time
-        const bitmap = await createImageBitmap(video)
-        this.poseClient?.detect(bitmap, performance.now())
+        this.poseClient?.detect(video, performance.now())
       }
       this.captureFrame = requestAnimationFrame(next => { void this.captureLoop(next, video) })
     }
@@ -135,6 +141,16 @@ export class AppController {
       return
     }
     this.pendingMotions.push(...this.detector.update(sample))
+  }
+
+  private stopCalibrationWithError(message: string): void {
+    if (!this.calibrating) return
+    this.calibrating = false
+    cancelAnimationFrame(this.captureFrame)
+    this.camera.stop(document.querySelector<HTMLVideoElement>('#camera-preview') ?? undefined)
+    this.poseClient?.dispose()
+    this.poseClient = null
+    renderMessage(this.root, '体感识别未能启动', message)
   }
 
   private startGame(): void {
