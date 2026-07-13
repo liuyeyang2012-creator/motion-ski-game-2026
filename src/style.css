@@ -30,7 +30,8 @@ body { min-width: 320px; background: #071523; }
   height: 100%;
 }
 
-#camera-preview { object-fit: cover; opacity: 0; pointer-events: none; }
+#camera-preview { object-fit: cover; opacity: 0; pointer-events: none; transition: opacity .2s ease; }
+body.calibrating #camera-preview { opacity: .82; }
 #game-canvas { display: block; }
 #screen-layer { z-index: 2; }
 
@@ -76,6 +77,138 @@ h2 { font-size: 34px; }
 .game-hint { margin: 18px auto; width: max-content; max-width: calc(100% - 32px); padding: 10px 16px; border-radius: 999px; color: #fff; background: #082f44cc; font-size: 12px; }
 .landscape-blocked::after { content: '请将手机旋转为竖屏'; position: fixed; z-index: 99; inset: 0; display: grid; place-content: center; color: #fff; background: #061b28; font-size: 22px; font-weight: 800; }
 .rest-notice { position: fixed; z-index: 100; left: 50%; bottom: 24px; transform: translateX(-50%); width: min(330px, calc(100% - 32px)); padding: 16px; border-radius: 16px; color: #fff; background: #0b526a; box-shadow: 0 12px 35px #0018; text-align: center; cursor: pointer; }
+
+.calibration-screen {
+  position: relative;
+  min-height: 100svh;
+  overflow: hidden;
+  color: #fff;
+}
+
+.calibration-shade {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, #02121e33, transparent 45%, #02121e55);
+  pointer-events: none;
+}
+
+.calibration-frame {
+  position: absolute;
+  z-index: 1;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 4px solid #39e7ff;
+  box-shadow: 0 0 0 100vmax #020b12a6, 0 0 24px #39e7ffb3, inset 0 0 18px #39e7ff66;
+  animation: calibration-pulse 1.8s ease-in-out infinite;
+}
+
+.calibration-frame.half-body {
+  top: max(11svh, 72px);
+  width: min(72%, 310px);
+  height: min(52svh, 410px);
+  border-radius: 46% 46% 22% 22% / 24% 24% 14% 14%;
+}
+
+.calibration-frame.full-body {
+  top: max(5svh, 36px);
+  width: min(52%, 220px);
+  height: min(68svh, 550px);
+  border-radius: 48% 48% 32% 32% / 16% 16% 10% 10%;
+}
+
+.calibration-screen.success .calibration-frame {
+  border-color: #42f59b;
+  box-shadow: 0 0 0 100vmax #020b12a6, 0 0 30px #42f59bcc, inset 0 0 18px #42f59b66;
+}
+
+.calibration-check {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  width: 76px;
+  height: 76px;
+  place-items: center;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  color: #04271a;
+  background: #42f59b;
+  box-shadow: 0 8px 34px #0008;
+  font-size: 48px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.calibration-status {
+  position: absolute;
+  z-index: 2;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  left: max(16px, env(safe-area-inset-left));
+  padding: 17px 18px 16px;
+  border: 1px solid #8cefff66;
+  border-radius: 20px;
+  color: #fff;
+  background: #041b29ed;
+  box-shadow: 0 14px 38px #0008;
+  text-align: left;
+  backdrop-filter: blur(12px);
+}
+
+.calibration-step {
+  margin: 0 0 5px;
+  color: #7deeff;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .08em;
+}
+
+.calibration-instruction {
+  margin: 0;
+  font-size: clamp(25px, 8vw, 34px);
+  line-height: 1.15;
+  letter-spacing: -.035em;
+}
+
+.calibration-progress {
+  height: 8px;
+  margin-top: 14px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #b9f5ff26;
+}
+
+.calibration-progress > i {
+  display: block;
+  width: var(--calibration-progress, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: #39e7ff;
+  transition: width .12s linear;
+}
+
+.calibration-screen.success .calibration-step { color: #79ffb5; }
+.calibration-screen.success .calibration-progress > i { background: #42f59b; }
+
+.calibration-help {
+  margin: 10px 0 0;
+  color: #c8e3ec;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+@keyframes calibration-pulse {
+  50% { filter: brightness(1.2); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #camera-preview,
+  .calibration-frame,
+  .calibration-progress > i {
+    animation: none;
+    transition: none;
+  }
+}
 
 .sr-only {
   position: absolute;
