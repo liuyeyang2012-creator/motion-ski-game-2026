@@ -11,6 +11,14 @@ describe('CalibrationSession', () => {
     expect(session.modelReady().phase).toBe('body-check')
   })
 
+  it('tracks the active model loading mode through failure', () => {
+    const session = new CalibrationSession('seated')
+
+    expect(session.cameraReady().modelMode).toBe('standard')
+    expect(session.beginModelLoading('compatibility').modelMode).toBe('compatibility')
+    expect(session.modelFailed()).toMatchObject({ phase: 'model-error', modelMode: 'compatibility' })
+  })
+
   it('keeps most action progress across one bad frame', () => {
     const session = readyHalfBodySession()
     session.update(leftLean(1000))

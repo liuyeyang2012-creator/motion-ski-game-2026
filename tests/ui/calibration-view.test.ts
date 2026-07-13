@@ -4,6 +4,7 @@ import { getCalibrationInstruction, renderCalibration } from '../../src/ui/calib
 
 const snapshot = (overrides: Partial<CalibrationSnapshot> = {}): CalibrationSnapshot => ({
   phase: 'action',
+  modelMode: 'standard',
   style: 'seated',
   stepIndex: 1,
   totalSteps: 5,
@@ -37,6 +38,20 @@ describe('calibration view', () => {
     renderCalibration(root, snapshot({ phase: 'body-check', action: null, feedback: 'body-not-found' }), actions)
     expect(root.textContent).toContain('人体识别 2/3')
     expect(root.textContent).toContain('请站到高亮框内')
+  })
+
+  it.each([
+    ['model-check', 'standard', '识别组件加载中', '首次加载可能需要一些时间'],
+    ['model-error', 'standard', '普通模式未能启动', '兼容模式重试'],
+    ['model-check', 'compatibility', '兼容模式加载中', '请保持竖屏'],
+    ['model-error', 'compatibility', '兼容模式未能启动', '再次尝试兼容模式'],
+  ] as const)('renders %s copy for %s mode', (phase, modelMode, title, detail) => {
+    const root = document.createElement('section')
+
+    renderCalibration(root, snapshot({ phase, modelMode, action: null }), actions)
+
+    expect(root.textContent).toContain(title)
+    expect(root.textContent).toContain(detail)
   })
 
   it('offers retry and recommended sensitivity after timeout', () => {

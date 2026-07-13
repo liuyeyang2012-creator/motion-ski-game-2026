@@ -33,8 +33,11 @@ export type CalibrationPhase =
   | 'step-success'
   | 'complete'
 
+export type CalibrationModelMode = 'standard' | 'compatibility'
+
 export interface CalibrationSnapshot {
   phase: CalibrationPhase
+  modelMode: CalibrationModelMode
   style: PlayStyle
   stepIndex: number
   totalSteps: 5
@@ -54,6 +57,7 @@ export class CalibrationSession {
   private readonly style: PlayStyle
   private readonly actions: readonly CalibrationAction[]
   private phase: CalibrationPhase = 'camera-check'
+  private modelMode: CalibrationModelMode = 'standard'
   private stepIndex = 0
   private completedSteps = 0
   private baselineSamples: PoseSample[] = []
@@ -77,8 +81,11 @@ export class CalibrationSession {
     return this.snapshot()
   }
 
-  beginModelLoading(): CalibrationSnapshot {
-    if (this.phase !== 'complete') this.phase = 'model-check'
+  beginModelLoading(mode: CalibrationModelMode = 'standard'): CalibrationSnapshot {
+    if (this.phase !== 'complete') {
+      this.modelMode = mode
+      this.phase = 'model-check'
+    }
     return this.snapshot()
   }
 
@@ -194,6 +201,7 @@ export class CalibrationSession {
       : 0
     return {
       phase: this.phase,
+      modelMode: this.modelMode,
       style: this.style,
       stepIndex: this.stepIndex,
       totalSteps: 5,

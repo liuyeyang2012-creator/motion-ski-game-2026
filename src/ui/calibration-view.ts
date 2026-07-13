@@ -46,8 +46,12 @@ const noActions: CalibrationViewActions = {
 export function getCalibrationInstruction(snapshot: CalibrationSnapshot): string {
   if (snapshot.phase === 'step-success') return '校准成功'
   if (snapshot.phase === 'camera-check') return '正在打开摄像头'
-  if (snapshot.phase === 'model-check') return '识别组件加载中'
-  if (snapshot.phase === 'model-error') return '识别组件加载失败'
+  if (snapshot.phase === 'model-check') {
+    return snapshot.modelMode === 'compatibility' ? '兼容模式加载中' : '识别组件加载中'
+  }
+  if (snapshot.phase === 'model-error') {
+    return snapshot.modelMode === 'compatibility' ? '兼容模式未能启动' : '普通模式未能启动'
+  }
   if (snapshot.phase === 'complete') return '准备完成'
   if (snapshot.phase === 'baseline') return '保持自然姿势'
   if (snapshot.phase === 'body-check' && snapshot.feedback) return feedbackCopy[snapshot.feedback]
@@ -96,7 +100,10 @@ export function renderCalibration(
   }
 
   if (snapshot.phase === 'model-error') {
-    status.append(actionButton('重新加载', 'retry-model', actions.onRetryModel))
+    const retryLabel = snapshot.modelMode === 'compatibility'
+      ? '再次尝试兼容模式'
+      : '兼容模式重试'
+    status.append(actionButton(retryLabel, 'retry-model', actions.onRetryModel))
   } else if (snapshot.canRecover) {
     const recovery = element('div', 'calibration-recovery')
     recovery.append(
@@ -105,9 +112,11 @@ export function renderCalibration(
     )
     status.append(recovery)
   } else {
-    const help = snapshot.phase === 'action'
-      ? '动作正确时进度会增加，短暂识别不稳不会清零。'
-      : '请保持竖屏，并让身体处在光线充足的位置。'
+    const help = snapshot.phase === 'model-check' && snapshot.modelMode === 'standard'
+      ? '首次加载可能需要一些时间，请保持竖屏。'
+      : snapshot.phase === 'action'
+        ? '动作正确时进度会增加，短暂识别不稳不会清零。'
+        : '请保持竖屏，并让身体处在光线充足的位置。'
     status.append(element('p', 'calibration-help', help))
   }
 

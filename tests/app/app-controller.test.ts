@@ -61,6 +61,7 @@ import { AppController, getCameraErrorCopy, shouldCapturePose, shouldVibrate } f
 function calibrationSnapshot(phase: CalibrationPhase): CalibrationSnapshot {
   return {
     phase,
+    modelMode: 'standard',
     style: 'seated',
     stepIndex: 0,
     totalSteps: 5,
