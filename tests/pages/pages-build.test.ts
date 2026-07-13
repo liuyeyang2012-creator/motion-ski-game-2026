@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -34,4 +34,15 @@ describe('GitHub Pages build contract', () => {
     writeFileSync(join(dist, 'pose_landmarker.task'), '')
     expect(() => verifyPagesBuild(dist, base)).toThrow('pose_landmarker.task')
   })
+})
+
+it('deploys the verified dist directory through the official Pages actions', () => {
+  const workflow = readFileSync('.github/workflows/pages.yml', 'utf8')
+  expect(workflow).toContain('branches: [master]')
+  expect(workflow).toContain('pages: write')
+  expect(workflow).toContain('id-token: write')
+  expect(workflow).toContain('npm run build:pages')
+  expect(workflow).toContain('actions/upload-pages-artifact@v4')
+  expect(workflow).toContain('path: dist')
+  expect(workflow).toContain('actions/deploy-pages@v4')
 })

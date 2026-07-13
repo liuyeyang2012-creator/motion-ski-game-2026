@@ -2,6 +2,11 @@
 
 面向久坐办公人群的手机网页体感小游戏。摄像头画面只在浏览器本机用于姿态识别，不上传、不保存。
 
+## 在线试玩
+
+- GitHub Pages 备用地址：`https://liuyeyang2012-creator.github.io/motion-ski-game-2026/`
+- 如果托管平台拦截当前网络，请优先尝试备用地址。
+
 ## 开发
 
 ```powershell
