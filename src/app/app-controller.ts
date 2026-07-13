@@ -9,6 +9,7 @@ import type { PoseSample } from '../pose/types'
 import { hasTrackingPose } from '../pose/pose-quality'
 import { SkiRenderer } from '../render/ski-renderer'
 import { loadRecords, recordResult, saveRecords } from '../storage/player-records'
+import { saveCalibrationProfile } from '../storage/calibration-profiles'
 import { renderCalibration, type CalibrationViewActions } from '../ui/calibration-view'
 import { renderMessage, renderResults, renderResume, renderSetup, renderWelcome, type SetupChoice } from '../ui/screens'
 
@@ -220,6 +221,7 @@ export class AppController {
         try { navigator.vibrate?.(35) } catch { /* Haptics are optional. */ }
       }
       if (next.phase === 'complete' && next.profile && !this.detector) {
+        saveCalibrationProfile(this.storage, this.choice.playStyle, next.profile)
         this.detector = new MotionDetector(next.profile, this.choice.playStyle)
         renderMessage(this.root, '校准完成', '3 · 2 · 1，准备出发！')
         this.countdownTimer = window.setTimeout(() => this.startGame(), 900)
