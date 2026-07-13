@@ -65,9 +65,14 @@ function calibrationSnapshot(phase: CalibrationPhase): CalibrationSnapshot {
     stepIndex: 0,
     totalSteps: 5,
     completedSteps: phase === 'step-success' ? 1 : 0,
+    completedActions: phase === 'step-success' ? ['lean-left'] : [],
     action: phase === 'action' || phase === 'step-success' ? 'lean-left' : null,
     holdProgress: 0,
     framingIssue: null,
+    feedback: null,
+    requiredIndices: [11, 12],
+    latestLandmarks: [],
+    canRecover: false,
     profile: null,
   }
 }
@@ -142,13 +147,38 @@ describe('calibration haptics', () => {
   it('vibrates only when entering step success', () => {
     expect(shouldVibrate(calibrationSnapshot('action'), calibrationSnapshot('step-success'))).toBe(true)
     expect(shouldVibrate(calibrationSnapshot('step-success'), calibrationSnapshot('step-success'))).toBe(false)
-    expect(shouldVibrate(calibrationSnapshot('framing'), calibrationSnapshot('action'))).toBe(false)
-    expect(shouldVibrate(calibrationSnapshot('action'), calibrationSnapshot('framing'))).toBe(false)
+    expect(shouldVibrate(calibrationSnapshot('body-check'), calibrationSnapshot('action'))).toBe(false)
+    expect(shouldVibrate(calibrationSnapshot('action'), calibrationSnapshot('body-check'))).toBe(false)
     expect(shouldVibrate(calibrationSnapshot('step-success'), calibrationSnapshot('action'))).toBe(false)
   })
 })
 
 describe('calibration async lifecycle', () => {
+  it('shows camera, model, then body readiness without entering action early', async () => {
+    const pendingPose = deferred<{ detect: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> }>()
+    dependencies.createPoseClient.mockReturnValueOnce(pendingPose.promise)
+    const { controller, root } = startCalibration()
+
+    await vi.waitFor(() => expect(root.textContent).toContain('识别组件加载中'))
+    pendingPose.resolve({ detect: vi.fn(), dispose: vi.fn() })
+    await vi.waitFor(() => expect(root.textContent).toContain('请站到高亮框内'))
+    interruptPregame(controller)
+  })
+
+  it('retries model loading without reopening the camera', async () => {
+    dependencies.createPoseClient
+      .mockRejectedValueOnce(new Error('load failed'))
+      .mockResolvedValueOnce({ detect: vi.fn(), dispose: vi.fn() })
+    const { controller, root } = startCalibration()
+
+    await vi.waitFor(() => expect(root.textContent).toContain('识别组件加载失败'))
+    ;(root.querySelector('[data-action="retry-model"]') as HTMLButtonElement).click()
+    await vi.waitFor(() => expect(dependencies.createPoseClient).toHaveBeenCalledTimes(2))
+
+    expect(dependencies.camera.start).toHaveBeenCalledOnce()
+    interruptPregame(controller)
+  })
+
   it.each(['resolve', 'reject'] as const)('keeps attempt two active when attempt one settles late via %s', async settlement => {
     const attemptOnePlay = deferred<void>()
     const attemptOne = fakeStream()

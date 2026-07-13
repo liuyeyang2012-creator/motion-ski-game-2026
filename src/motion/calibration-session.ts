@@ -77,16 +77,21 @@ export class CalibrationSession {
     return this.snapshot()
   }
 
+  beginModelLoading(): CalibrationSnapshot {
+    if (this.phase !== 'complete') this.phase = 'model-check'
+    return this.snapshot()
+  }
+
   modelReady(): CalibrationSnapshot {
     if (this.phase === 'model-check' || this.phase === 'model-error') {
-      this.phase = 'body-check'
-      this.feedback = 'body-not-found'
+      this.phase = this.profile ? 'action' : 'body-check'
+      this.feedback = this.profile ? this.feedback : 'body-not-found'
     }
     return this.snapshot()
   }
 
   modelFailed(): CalibrationSnapshot {
-    if (this.phase === 'model-check') this.phase = 'model-error'
+    if (this.phase !== 'complete') this.phase = 'model-error'
     return this.snapshot()
   }
 

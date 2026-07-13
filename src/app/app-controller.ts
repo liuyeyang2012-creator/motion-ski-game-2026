@@ -9,7 +9,7 @@ import type { PoseSample } from '../pose/types'
 import { hasTrackingPose } from '../pose/pose-quality'
 import { SkiRenderer } from '../render/ski-renderer'
 import { loadRecords, recordResult, saveRecords } from '../storage/player-records'
-import { renderCalibration } from '../ui/calibration-view'
+import { renderCalibration, type CalibrationViewActions } from '../ui/calibration-view'
 import { renderMessage, renderResults, renderResume, renderSetup, renderWelcome, type SetupChoice } from '../ui/screens'
 
 interface Options { root: HTMLElement; storage: Pick<Storage, 'getItem' | 'setItem'>; fixtureMode?: boolean }
@@ -82,6 +82,7 @@ export class AppController {
   private countdownTimer = 0
   private calibrating = false
   private pregameInterrupted = false
+  private poseInitialization = 0
 
   constructor(options: Options) { this.root = options.root; this.storage = options.storage; this.fixtureMode = options.fixtureMode ?? false }
 
@@ -112,10 +113,12 @@ export class AppController {
     const session = new CalibrationSession(this.choice.playStyle)
     this.calibrationSession = session
     document.body.classList.add('calibrating')
-    renderCalibration(this.root, this.calibrationSession.snapshot())
+    this.renderCalibrationSession(session)
     this.renderer = new SkiRenderer(canvas)
     this.renderer.resize(canvas.clientWidth || 390, canvas.clientHeight || 844, Math.min(devicePixelRatio || 1, 2))
     if (this.fixtureMode) {
+      session.cameraReady()
+      session.modelReady()
       for (const sample of createSeatedFixtureSamples()) this.onPose(sample)
       return
     }
@@ -134,6 +137,8 @@ export class AppController {
       video.srcObject = stream
       await video.play()
       cameraTarget.srcObject = null
+      session.cameraReady()
+      this.renderCalibrationSession(session)
     } catch (error) {
       cameraTarget.srcObject = null
       if (!this.isCurrentCalibration(session)) {
@@ -151,29 +156,46 @@ export class AppController {
       camera.stop()
       return
     }
+    await this.initializePoseForCalibration(session, video)
+  }
+
+  private async initializePoseForCalibration(session: CalibrationSession, video?: HTMLVideoElement): Promise<void> {
+    const preview = video ?? document.querySelector<HTMLVideoElement>('#camera-preview') ?? undefined
+    if (!preview || !this.isCurrentCalibration(session)) return
+    const initialization = ++this.poseInitialization
+    session.beginModelLoading()
+    this.renderCalibrationSession(session)
+    this.poseClient?.dispose()
+    this.poseClient = null
     try {
       let client: DirectPoseClient | null = null
       client = await createDirectPoseClient(
         document.baseURI,
         sample => {
-          if (this.calibrationSession === session || (client !== null && this.poseClient === client)) this.onPose(sample)
+          if (this.isCurrentCalibration(session) && client !== null && this.poseClient === client) this.onPose(sample)
         },
         () => {
-          if (this.calibrationSession === session || (client !== null && this.poseClient === client)) {
-            this.stopCalibrationWithError('体感识别遇到问题，请刷新页面后重试')
-          }
+          if (!this.isCurrentCalibration(session) || client === null || this.poseClient !== client) return
+          client.dispose()
+          this.poseClient = null
+          session.modelFailed()
+          this.renderCalibrationSession(session)
         },
       )
-      if (!this.isCurrentCalibration(session)) {
+      if (!this.isCurrentCalibration(session) || initialization !== this.poseInitialization) {
         client.dispose()
         return
       }
       this.poseClient = client
+      session.modelReady()
+      this.renderCalibrationSession(session)
       this.lastInference = 0
-      this.captureFrame = requestAnimationFrame(time => this.captureLoop(time, video))
+      cancelAnimationFrame(this.captureFrame)
+      this.captureFrame = requestAnimationFrame(time => this.captureLoop(time, preview))
     } catch {
-      if (!this.isCurrentCalibration(session)) return
-      this.stopCalibrationWithError('识别组件加载失败，请检查网络后刷新页面重试')
+      if (!this.isCurrentCalibration(session) || initialization !== this.poseInitialization) return
+      session.modelFailed()
+      this.renderCalibrationSession(session)
     }
   }
 
@@ -193,7 +215,7 @@ export class AppController {
       if (!session) return
       const previous = session.snapshot()
       const next = session.update(sample)
-      renderCalibration(this.root, next)
+      this.renderCalibrationSession(session)
       if (shouldVibrate(previous, next)) {
         try { navigator.vibrate?.(35) } catch { /* Haptics are optional. */ }
       }
@@ -212,15 +234,32 @@ export class AppController {
     this.pendingMotions.push(...this.detector.update(sample))
   }
 
-  private stopCalibrationWithError(message: string): void {
-    if (!this.calibrating) return
-    this.clearCalibrationState()
-    cancelAnimationFrame(this.captureFrame)
-    this.stopCurrentCamera(document.querySelector<HTMLVideoElement>('#camera-preview') ?? undefined)
-    this.poseClient?.dispose()
-    this.poseClient = null
-    this.detector = null
-    renderMessage(this.root, '体感识别未能启动', message)
+  private calibrationViewActions(session: CalibrationSession): CalibrationViewActions {
+    return {
+      onRetryModel: () => { void this.initializePoseForCalibration(session) },
+      onRetryBody: () => {
+        session.restartBodyCheck()
+        this.renderCalibrationSession(session)
+      },
+      onRetryAction: () => {
+        session.retryCurrentAction()
+        this.renderCalibrationSession(session)
+      },
+      onUseRecommended: () => {
+        const previous = session.snapshot()
+        session.useRecommendedSensitivity()
+        const next = session.snapshot()
+        this.renderCalibrationSession(session)
+        if (shouldVibrate(previous, next)) {
+          try { navigator.vibrate?.(35) } catch { /* Haptics are optional. */ }
+        }
+      },
+    }
+  }
+
+  private renderCalibrationSession(session: CalibrationSession): void {
+    if (!this.isCurrentCalibration(session)) return
+    renderCalibration(this.root, session.snapshot(), this.calibrationViewActions(session))
   }
 
   private clearCalibrationState(): void {
