@@ -99,7 +99,7 @@ export function matchesCalibrationAction(profile: CalibrationProfile, sample: Po
   if (action === 'lean-right') return torsoCenterX > profile.torsoCenterX + profile.shoulderWidth * 0.2
   if (action === 'duck') return sample.landmarks[0].y > profile.headY + profile.shoulderWidth * 0.2
   if (action === 'hands-up') return sample.landmarks[15].y < sample.landmarks[11].y && sample.landmarks[16].y < sample.landmarks[12].y
-  if (action === 'reach') return sample.landmarks[15].x < sample.landmarks[11].x - profile.shoulderWidth || sample.landmarks[16].x > sample.landmarks[12].x + profile.shoulderWidth
+  if (action === 'reach') return sample.landmarks[15].x < sample.landmarks[11].x - profile.shoulderWidth && sample.landmarks[16].x > sample.landmarks[12].x + profile.shoulderWidth
   return profile.hipY !== null && (sample.landmarks[23].y + sample.landmarks[24].y) / 2 > profile.hipY + profile.shoulderWidth * 0.25
 }
 

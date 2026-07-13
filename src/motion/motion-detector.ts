@@ -26,7 +26,7 @@ export class MotionDetector {
     const hipY = (point(23).y + point(24).y) / 2
     const lean = (centerX - this.profile.torsoCenterX) / this.profile.shoulderWidth
     const duck = (point(0).y - this.profile.headY) / this.profile.shoulderWidth
-    const squat = (hipY - this.profile.hipY) / this.profile.shoulderWidth
+    const squat = this.profile.hipY === null ? 0 : (hipY - this.profile.hipY) / this.profile.shoulderWidth
     const handsUp = point(15).y < point(11).y && point(16).y < point(12).y
     const conditions: Partial<Record<MotionType, boolean>> = {
       'lean-left': lean < -MOTION_THRESHOLDS.leanRatio,

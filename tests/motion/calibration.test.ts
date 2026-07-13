@@ -34,7 +34,8 @@ describe('mode-specific calibration', () => {
     if (!seated.ok || !standing.ok) throw new Error('calibration failed')
 
     expect(matchesCalibrationAction(seated.profile, poseSample(1, { changes: { 11: { x: 0.34 }, 12: { x: 0.54 } } }), 'seated', 'lean-left')).toBe(true)
-    expect(matchesCalibrationAction(seated.profile, poseSample(1, { changes: { 15: { x: 0.1 } } }), 'seated', 'reach')).toBe(true)
+    expect(matchesCalibrationAction(seated.profile, poseSample(1, { changes: { 15: { x: 0.1 } } }), 'seated', 'reach')).toBe(false)
+    expect(matchesCalibrationAction(seated.profile, poseSample(1, { changes: { 15: { x: 0.1 }, 16: { x: 0.9 } } }), 'seated', 'reach')).toBe(true)
     expect(matchesCalibrationAction(standing.profile, poseSample(1, { changes: { 23: { y: 0.76 }, 24: { y: 0.76 } } }), 'standing', 'squat')).toBe(true)
   })
 
