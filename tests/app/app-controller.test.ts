@@ -56,7 +56,14 @@ vi.mock('../../src/render/ski-renderer', () => ({
   },
 }))
 
-import { AppController, getCameraErrorCopy, shouldCapturePose, shouldVibrate } from '../../src/app/app-controller'
+import {
+  AppController,
+  getCameraErrorCopy,
+  initializePoseClientWithTimeout,
+  PoseInitializationTimeoutError,
+  shouldCapturePose,
+  shouldVibrate,
+} from '../../src/app/app-controller'
 
 function calibrationSnapshot(phase: CalibrationPhase): CalibrationSnapshot {
   return {
@@ -154,6 +161,42 @@ describe('calibration haptics', () => {
   })
 })
 
+describe('pose initialization timeout', () => {
+  it('times out a pose initialization that never settles', async () => {
+    vi.useFakeTimers()
+    try {
+      const pending = deferred<{ dispose(): void }>()
+      const result = initializePoseClientWithTimeout(pending.promise)
+      const rejected = expect(result).rejects.toBeInstanceOf(PoseInitializationTimeoutError)
+
+      await vi.advanceTimersByTimeAsync(15_000)
+
+      await rejected
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('disposes a pose client that resolves after its timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      const pending = deferred<{ dispose(): void }>()
+      const client = { dispose: vi.fn() }
+      const result = initializePoseClientWithTimeout(pending.promise)
+      const rejected = expect(result).rejects.toBeInstanceOf(PoseInitializationTimeoutError)
+
+      await vi.advanceTimersByTimeAsync(15_000)
+      await rejected
+      pending.resolve(client)
+      await Promise.resolve()
+
+      expect(client.dispose).toHaveBeenCalledOnce()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('calibration async lifecycle', () => {
   it('shows camera, model, then body readiness without entering action early', async () => {
     const pendingPose = deferred<{ detect: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> }>()
@@ -167,17 +210,41 @@ describe('calibration async lifecycle', () => {
   })
 
   it('retries model loading without reopening the camera', async () => {
+    const compatibilityPose = deferred<{ detect: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> }>()
     dependencies.createPoseClient
       .mockRejectedValueOnce(new Error('load failed'))
-      .mockResolvedValueOnce({ detect: vi.fn(), dispose: vi.fn() })
+      .mockReturnValueOnce(compatibilityPose.promise)
     const { controller, root } = startCalibration()
 
-    await vi.waitFor(() => expect(root.textContent).toContain('识别组件加载失败'))
-    ;(root.querySelector('[data-action="retry-model"]') as HTMLButtonElement).click()
-    await vi.waitFor(() => expect(dependencies.createPoseClient).toHaveBeenCalledTimes(2))
+    await vi.waitFor(() => expect(root.textContent).toContain('普通模式未能启动'))
+    const retry = root.querySelector('[data-action="retry-model"]') as HTMLButtonElement
+    retry.click()
 
+    expect(root.textContent).toContain('兼容模式加载中')
+    expect(root.querySelector('[data-action="retry-model"]')).toBeNull()
+    expect(dependencies.createPoseClient).toHaveBeenCalledTimes(2)
+    expect(dependencies.createPoseClient.mock.calls[0]?.[4]).toEqual({ mode: 'standard' })
+    expect(dependencies.createPoseClient.mock.calls[1]?.[4]).toEqual({ mode: 'compatibility' })
     expect(dependencies.camera.start).toHaveBeenCalledOnce()
+    compatibilityPose.resolve({ detect: vi.fn(), dispose: vi.fn() })
     interruptPregame(controller)
+  })
+
+  it('leaves model loading after fifteen seconds when initialization never settles', async () => {
+    vi.useFakeTimers()
+    try {
+      dependencies.createPoseClient.mockReturnValueOnce(deferred<never>().promise)
+      const { root } = startCalibration()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(dependencies.createPoseClient).toHaveBeenCalledOnce()
+
+      await vi.advanceTimersByTimeAsync(15_000)
+
+      expect(root.textContent).toContain('普通模式未能启动')
+      expect(root.querySelector('[data-action="retry-model"]')?.textContent).toBe('兼容模式重试')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it.each(['resolve', 'reject'] as const)('keeps attempt two active when attempt one settles late via %s', async settlement => {

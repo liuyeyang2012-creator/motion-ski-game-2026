@@ -1,7 +1,11 @@
 import { CameraController } from '../camera/camera-controller'
 import { advanceGame, createGame } from '../game/game-engine'
 import type { GameState } from '../game/types'
-import { CalibrationSession, type CalibrationSnapshot } from '../motion/calibration-session'
+import {
+  CalibrationSession,
+  type CalibrationModelMode,
+  type CalibrationSnapshot,
+} from '../motion/calibration-session'
 import { MotionDetector, type MotionEvent } from '../motion/motion-detector'
 import { createDirectPoseClient, DirectPoseClient } from '../pose/direct-pose-client'
 import { LifecycleMonitor, type LifecycleEvent } from '../platform/lifecycle'
@@ -15,6 +19,33 @@ import { renderMessage, renderResults, renderResume, renderSetup, renderWelcome,
 
 export type PoseFixtureMode = 'seated-quick-success' | 'seated-soft-success' | 'seated-stuck-action'
 interface Options { root: HTMLElement; storage: Pick<Storage, 'getItem' | 'setItem'>; fixtureMode?: boolean | PoseFixtureMode }
+
+export const POSE_INITIALIZATION_TIMEOUT_MS = 15_000
+
+export class PoseInitializationTimeoutError extends Error {
+  constructor() {
+    super('Pose initialization timed out')
+    this.name = 'PoseInitializationTimeoutError'
+  }
+}
+
+export function initializePoseClientWithTimeout<T extends { dispose(): void }>(
+  task: Promise<T>,
+  timeoutMs = POSE_INITIALIZATION_TIMEOUT_MS,
+): Promise<T> {
+  let timedOut = false
+  let timer = 0
+  task.then(client => {
+    if (timedOut) client.dispose()
+  }).catch(() => {})
+  const timeout = new Promise<never>((_, reject) => {
+    timer = window.setTimeout(() => {
+      timedOut = true
+      reject(new PoseInitializationTimeoutError())
+    }, timeoutMs)
+  })
+  return Promise.race([task, timeout]).finally(() => window.clearTimeout(timer))
+}
 
 export function getCameraErrorCopy(error: unknown, secureContext: boolean): { title: string; body: string } {
   if (!secureContext || !navigator.mediaDevices?.getUserMedia) {
@@ -185,17 +216,21 @@ export class AppController {
     await this.initializePoseForCalibration(session, video)
   }
 
-  private async initializePoseForCalibration(session: CalibrationSession, video?: HTMLVideoElement): Promise<void> {
+  private async initializePoseForCalibration(
+    session: CalibrationSession,
+    video?: HTMLVideoElement,
+    mode: CalibrationModelMode = 'standard',
+  ): Promise<void> {
     const preview = video ?? document.querySelector<HTMLVideoElement>('#camera-preview') ?? undefined
     if (!preview || !this.isCurrentCalibration(session)) return
     const initialization = ++this.poseInitialization
-    session.beginModelLoading()
+    session.beginModelLoading(mode)
     this.renderCalibrationSession(session)
     this.poseClient?.dispose()
     this.poseClient = null
     try {
       let client: DirectPoseClient | null = null
-      client = await createDirectPoseClient(
+      client = await initializePoseClientWithTimeout(createDirectPoseClient(
         document.baseURI,
         sample => {
           if (this.isCurrentCalibration(session) && client !== null && this.poseClient === client) this.onPose(sample)
@@ -207,7 +242,9 @@ export class AppController {
           session.modelFailed()
           this.renderCalibrationSession(session)
         },
-      )
+        undefined,
+        { mode },
+      ))
       if (!this.isCurrentCalibration(session) || initialization !== this.poseInitialization) {
         client.dispose()
         return
@@ -263,7 +300,7 @@ export class AppController {
 
   private calibrationViewActions(session: CalibrationSession): CalibrationViewActions {
     return {
-      onRetryModel: () => { void this.initializePoseForCalibration(session) },
+      onRetryModel: () => { void this.initializePoseForCalibration(session, undefined, 'compatibility') },
       onRetryBody: () => {
         session.restartBodyCheck()
         this.renderCalibrationSession(session)
