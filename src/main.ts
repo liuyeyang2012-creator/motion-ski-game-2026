@@ -1,5 +1,5 @@
 import './style.css'
-import { AppController } from './app/app-controller'
+import { AppController, type PoseFixtureMode } from './app/app-controller'
 
 export function mountShell(root: Element): void {
   root.innerHTML = `
@@ -16,7 +16,12 @@ if (typeof document !== 'undefined') {
   if (root) {
     mountShell(root)
     const screen = document.querySelector<HTMLElement>('#screen-layer')
-    const fixtureMode = import.meta.env.DEV && new URLSearchParams(location.search).get('poseFixture') === 'seated-quick-success'
+    const fixtureValue = import.meta.env.DEV ? new URLSearchParams(location.search).get('poseFixture') : null
+    const fixtureMode: PoseFixtureMode | undefined = fixtureValue === 'seated-quick-success'
+      || fixtureValue === 'seated-soft-success'
+      || fixtureValue === 'seated-stuck-action'
+      ? fixtureValue
+      : undefined
     if (screen) new AppController({ root: screen, storage: localStorage, fixtureMode }).start()
   }
 }

@@ -17,6 +17,11 @@ npm run typecheck
 npm run build
 ```
 
+开发环境可使用两条校准模拟入口：
+
+- `?poseFixture=seated-soft-success`：模拟腿脚不入镜和短暂丢帧，并自动完成半身柔性校准。
+- `?poseFixture=seated-stuck-action`：停在第一个动作并显示“使用推荐灵敏度”。
+
 ## 姿态模型
 
 - 运行库：Google MediaPipe Tasks Vision，Apache-2.0 License。
@@ -36,7 +41,7 @@ npm run build
 ## 隐私与本地数据
 
 - 摄像头视频帧、人体关键点和逐帧动作不会上传或持久化。
-- 浏览器只保存最高分、最高连击、累计活动时间和上次模式选择。
+- 浏览器只保存最高分、最高连击、累计活动时间、上次模式选择，以及半身/全身各自的校准数值。
 - 清除浏览器站点数据会同时清除这些本地记录。
 
 ## 验证

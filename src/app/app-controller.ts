@@ -13,7 +13,8 @@ import { saveCalibrationProfile } from '../storage/calibration-profiles'
 import { renderCalibration, type CalibrationViewActions } from '../ui/calibration-view'
 import { renderMessage, renderResults, renderResume, renderSetup, renderWelcome, type SetupChoice } from '../ui/screens'
 
-interface Options { root: HTMLElement; storage: Pick<Storage, 'getItem' | 'setItem'>; fixtureMode?: boolean }
+export type PoseFixtureMode = 'seated-quick-success' | 'seated-soft-success' | 'seated-stuck-action'
+interface Options { root: HTMLElement; storage: Pick<Storage, 'getItem' | 'setItem'>; fixtureMode?: boolean | PoseFixtureMode }
 
 export function getCameraErrorCopy(error: unknown, secureContext: boolean): { title: string; body: string } {
   if (!secureContext || !navigator.mediaDevices?.getUserMedia) {
@@ -34,7 +35,11 @@ export function shouldVibrate(previous: CalibrationSnapshot, next: CalibrationSn
 }
 
 function createSeatedFixtureSamples(): PoseSample[] {
-  const sample = (capturedAt: number, changes: Record<number, Partial<{ x: number; y: number }>> = {}): PoseSample => {
+  const sample = (
+    capturedAt: number,
+    changes: Record<number, Partial<{ x: number; y: number }>> = {},
+    hidden: number[] = [],
+  ): PoseSample => {
     const landmarks = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, z: 0, visibility: 1 }))
     Object.assign(landmarks[0], { x: 0.5, y: 0.2 })
     Object.assign(landmarks[11], { x: 0.4, y: 0.4 })
@@ -45,22 +50,35 @@ function createSeatedFixtureSamples(): PoseSample[] {
     Object.assign(landmarks[24], { x: 0.57, y: 0.7 })
     Object.assign(landmarks[25], { x: 0.43, y: 0.9 })
     Object.assign(landmarks[26], { x: 0.57, y: 0.9 })
+    for (const index of hidden) landmarks[index].visibility = 0
     for (const [index, change] of Object.entries(changes)) Object.assign(landmarks[Number(index)], change)
     return { capturedAt, landmarks }
   }
   const action = (start: number, changes: Record<number, Partial<{ x: number; y: number }>>) => [
-    ...Array.from({ length: 6 }, (_, index) => sample(start + index * 80, changes)),
-    sample(start + 850),
+    sample(start, changes),
+    sample(start + 80, changes),
+    { capturedAt: start + 160, landmarks: [] },
+    ...Array.from({ length: 5 }, (_, index) => sample(start + 240 + index * 80, changes)),
+    sample(start + 1050),
   ]
 
   return [
-    ...Array.from({ length: 8 }, (_, index) => sample(index * 100)),
-    ...action(800, { 11: { x: 0.3 }, 12: { x: 0.5 } }),
-    ...action(1750, { 11: { x: 0.5 }, 12: { x: 0.7 } }),
-    ...action(2700, { 0: { y: 0.3 } }),
-    ...action(3650, { 15: { y: 0.3 }, 16: { y: 0.3 } }),
-    ...action(4600, { 15: { x: 0.1 }, 16: { x: 0.9 } }),
+    ...Array.from({ length: 11 }, (_, index) => sample(
+      index * 80,
+      {},
+      [15, 16, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32],
+    )),
+    ...action(1000, { 11: { x: 0.3 }, 12: { x: 0.5 } }),
+    ...action(2300, { 11: { x: 0.5 }, 12: { x: 0.7 } }),
+    ...action(3600, { 0: { y: 0.3 } }),
+    ...action(4900, { 15: { y: 0.3 }, 16: { y: 0.3 } }),
+    ...action(6200, { 15: { x: 0.1 }, 16: { x: 0.9 } }),
   ]
+}
+
+function createStuckFixtureSamples(): PoseSample[] {
+  const baseline = createSeatedFixtureSamples().slice(0, 11)
+  return [...baseline, { ...baseline[baseline.length - 1], capturedAt: 9_000 }]
 }
 
 export class AppController {
@@ -79,13 +97,17 @@ export class AppController {
   private lastFrame = 0
   private lastInference = 0
   private lifecycle = new LifecycleMonitor(event => this.onLifecycle(event))
-  private fixtureMode: boolean
+  private fixtureMode: PoseFixtureMode | null
   private countdownTimer = 0
   private calibrating = false
   private pregameInterrupted = false
   private poseInitialization = 0
 
-  constructor(options: Options) { this.root = options.root; this.storage = options.storage; this.fixtureMode = options.fixtureMode ?? false }
+  constructor(options: Options) {
+    this.root = options.root
+    this.storage = options.storage
+    this.fixtureMode = options.fixtureMode === true ? 'seated-soft-success' : options.fixtureMode || null
+  }
 
   start(): void {
     this.lifecycle.attach()
@@ -120,7 +142,10 @@ export class AppController {
     if (this.fixtureMode) {
       session.cameraReady()
       session.modelReady()
-      for (const sample of createSeatedFixtureSamples()) this.onPose(sample)
+      const samples = this.fixtureMode === 'seated-stuck-action'
+        ? createStuckFixtureSamples()
+        : createSeatedFixtureSamples()
+      samples.forEach((sample, index) => window.setTimeout(() => this.onPose(sample), index * 20))
       return
     }
     const camera = new CameraController()
