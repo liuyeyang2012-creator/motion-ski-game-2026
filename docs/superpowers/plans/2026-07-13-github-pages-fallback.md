@@ -168,6 +168,8 @@ it('deploys the verified dist directory through the official Pages actions', () 
   expect(workflow).toContain('branches: [master]')
   expect(workflow).toContain('pages: write')
   expect(workflow).toContain('id-token: write')
+  expect(workflow).toContain('actions/checkout@v6')
+  expect(workflow).toContain('actions/setup-node@v6')
   expect(workflow).toContain('npm run build:pages')
   expect(workflow).toContain('actions/upload-pages-artifact@v4')
   expect(workflow).toContain('path: dist')
@@ -211,8 +213,8 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 22
           cache: npm
