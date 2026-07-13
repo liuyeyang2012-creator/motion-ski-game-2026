@@ -8,7 +8,6 @@ export interface PoseLandmark {
 export interface PoseSample {
   capturedAt: number
   landmarks: PoseLandmark[]
-  confidence: number
 }
 
 export type PoseWorkerRequest =

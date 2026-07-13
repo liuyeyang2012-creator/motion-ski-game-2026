@@ -18,7 +18,6 @@ describe('DirectPoseClient', () => {
     expect(onSample).toHaveBeenCalledWith({
       capturedAt: 120,
       landmarks: [{ x: 0.4, y: 0.3, z: -0.1, visibility: 0.9 }],
-      confidence: 0.9,
     })
   })
 

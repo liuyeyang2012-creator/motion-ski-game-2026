@@ -20,9 +20,9 @@ describe('PoseClient', () => {
 
     expect(client.detect(bitmap, 100)).toBe(true)
     expect(client.detect(bitmap, 200)).toBe(false)
-    worker.emit(1, { capturedAt: 100, landmarks: [], confidence: 0.9 })
+    worker.emit(1, { capturedAt: 100, landmarks: [] })
     expect(client.detect(bitmap, 200)).toBe(true)
-    worker.emit(2, { capturedAt: 200, landmarks: [], confidence: 0.9 })
+    worker.emit(2, { capturedAt: 200, landmarks: [] })
 
     expect(received.map(sample => sample.capturedAt)).toEqual([100, 200])
     expect(worker.postMessage).toHaveBeenCalledWith(

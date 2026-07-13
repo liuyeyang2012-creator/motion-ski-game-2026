@@ -6,6 +6,7 @@ import { MotionDetector, type MotionEvent } from '../motion/motion-detector'
 import { createDirectPoseClient, DirectPoseClient } from '../pose/direct-pose-client'
 import { LifecycleMonitor, type LifecycleEvent } from '../platform/lifecycle'
 import type { PoseSample } from '../pose/types'
+import { hasTrackingPose } from '../pose/pose-quality'
 import { SkiRenderer } from '../render/ski-renderer'
 import { loadRecords, recordResult, saveRecords } from '../storage/player-records'
 import { renderCalibration } from '../ui/calibration-view'
@@ -44,7 +45,7 @@ function createSeatedFixtureSamples(): PoseSample[] {
     Object.assign(landmarks[25], { x: 0.43, y: 0.9 })
     Object.assign(landmarks[26], { x: 0.57, y: 0.9 })
     for (const [index, change] of Object.entries(changes)) Object.assign(landmarks[Number(index)], change)
-    return { capturedAt, landmarks, confidence: 0.95 }
+    return { capturedAt, landmarks }
   }
   const action = (start: number, changes: Record<number, Partial<{ x: number; y: number }>>) => [
     ...Array.from({ length: 6 }, (_, index) => sample(start + index * 80, changes)),
@@ -204,7 +205,7 @@ export class AppController {
       return
     }
     if (!this.detector || this.game?.status !== 'playing') return
-    if (sample.confidence < 0.6) {
+    if (!hasTrackingPose(sample, this.choice.playStyle)) {
       this.pauseForReposition('请重新进入画面')
       return
     }

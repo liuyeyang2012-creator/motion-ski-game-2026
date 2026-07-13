@@ -49,10 +49,7 @@ export class DirectPoseClient {
         z: point.z,
         visibility: point.visibility ?? 0,
       })) ?? []
-      const confidence = landmarks.length === 0
-        ? 0
-        : landmarks.reduce((sum, point) => sum + point.visibility, 0) / landmarks.length
-      this.onSample({ capturedAt, landmarks, confidence })
+      this.onSample({ capturedAt, landmarks })
       return true
     } catch (error) {
       this.onError(error instanceof Error ? error : new Error('姿态识别失败'))

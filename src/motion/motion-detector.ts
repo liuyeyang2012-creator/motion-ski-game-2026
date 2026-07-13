@@ -1,5 +1,6 @@
 import type { PlayStyle } from '../app/types'
 import type { PoseSample } from '../pose/types'
+import { assessLandmarks } from '../pose/pose-quality'
 import type { CalibrationProfile } from './calibration'
 
 export type MotionType = 'lean-left' | 'lean-right' | 'duck' | 'squat' | 'hands-up' | 'reach-left' | 'reach-right' | 'pose-lost'
@@ -21,9 +22,7 @@ export class MotionDetector {
 
   update(sample: PoseSample): MotionEvent[] {
     if (
-      !Number.isFinite(sample.confidence)
-      || sample.confidence < 0.6
-      || !Number.isFinite(sample.capturedAt)
+      !Number.isFinite(sample.capturedAt)
       || !Number.isFinite(this.profile.shoulderWidth)
       || this.profile.shoulderWidth <= 0
     ) return []
@@ -63,7 +62,14 @@ export class MotionDetector {
     }
     const events: MotionEvent[] = []
     for (const [type, condition] of Object.entries(conditions) as [MotionType, boolean][]) {
-      const event = this.updateGate(type, condition, sample.capturedAt, sample.confidence)
+      const required = type === 'duck'
+        ? [0]
+        : type === 'squat'
+          ? [23, 24]
+          : type === 'lean-left' || type === 'lean-right'
+            ? this.style === 'standing' ? [11, 12, 23, 24] : [11, 12]
+            : [11, 12, 15, 16]
+      const event = this.updateGate(type, condition, sample.capturedAt, assessLandmarks(sample, required).confidence)
       if (event) events.push(event)
     }
     return events

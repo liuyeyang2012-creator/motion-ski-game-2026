@@ -40,7 +40,7 @@ const average = (values: number[]) => values.reduce((sum, value) => sum + value,
 const isVisible = (sample: PoseSample, index: number) => (sample.landmarks[index]?.visibility ?? 0) >= 0.6
 
 export function checkFraming(sample: PoseSample, style: PlayStyle): FramingResult {
-  if (sample.confidence < 0.6 || sample.landmarks.length === 0) return { ok: false, issue: 'pose-lost' }
+  if (sample.landmarks.length === 0) return { ok: false, issue: 'pose-lost' }
   if (!isVisible(sample, 0)) return { ok: false, issue: 'head-not-visible' }
   if (!isVisible(sample, 11) || !isVisible(sample, 12)) return { ok: false, issue: 'shoulders-not-visible' }
   if (!isVisible(sample, 15) || !isVisible(sample, 16)) return { ok: false, issue: 'hands-not-visible' }
@@ -79,7 +79,7 @@ export function buildCalibration(samples: PoseSample[], style: PlayStyle): Calib
 }
 
 export function matchesCalibrationAction(profile: CalibrationProfile, sample: PoseSample, style: PlayStyle, action: CalibrationAction): boolean {
-  if (sample.confidence < 0.6 || !getCalibrationActions(style).includes(action)) return false
+  if (sample.landmarks.length === 0 || !getCalibrationActions(style).includes(action)) return false
   const required = action === 'duck'
     ? [0]
     : action === 'hands-up' || action === 'reach'
@@ -109,7 +109,7 @@ export function matchesCalibrationAction(profile: CalibrationProfile, sample: Po
 }
 
 export function validateCalibrationActions(profile: CalibrationProfile, samples: PoseSample[], style: PlayStyle): { ok: true } | { ok: false; issue: ActionCalibrationIssue } {
-  const usable = (sample: PoseSample) => sample.confidence >= 0.6 && sample.landmarks.length >= 27
+  const usable = (sample: PoseSample) => sample.landmarks.length >= 27
   if (samples.filter(usable).length < samples.length * 0.6) return { ok: false, issue: 'pose-lost' }
   const actionSamples = (actionIndex: number) => samples
     .slice(CALIBRATION_SAMPLES_PER_STEP * (actionIndex + 1), CALIBRATION_SAMPLES_PER_STEP * (actionIndex + 2))

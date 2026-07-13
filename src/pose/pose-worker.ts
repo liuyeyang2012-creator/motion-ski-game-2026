@@ -43,10 +43,7 @@ context.onmessage = async (event: MessageEvent<PoseWorkerRequest>) => {
       z: point.z,
       visibility: point.visibility ?? 0,
     })) ?? []
-    const confidence = landmarks.length === 0
-      ? 0
-      : landmarks.reduce((sum, point) => sum + point.visibility, 0) / landmarks.length
-    send({ type: 'result', id, sample: { capturedAt, landmarks, confidence } })
+    send({ type: 'result', id, sample: { capturedAt, landmarks } })
   } catch (error) {
     send({ type: 'error', message: error instanceof Error ? error.message : '姿态识别失败' })
   } finally {

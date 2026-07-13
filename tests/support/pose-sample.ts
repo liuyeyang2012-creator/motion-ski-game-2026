@@ -13,5 +13,5 @@ export function poseSample(capturedAt: number, options: { hidden?: number[]; cha
   Object.assign(landmarks[26], { x: 0.57, y: 0.9 })
   for (const index of options.hidden ?? []) landmarks[index].visibility = 0
   for (const [index, change] of Object.entries(options.changes ?? {})) Object.assign(landmarks[Number(index)], change)
-  return { capturedAt, landmarks, confidence: 0.95 }
+  return { capturedAt, landmarks }
 }

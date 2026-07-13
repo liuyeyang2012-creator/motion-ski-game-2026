@@ -195,7 +195,7 @@ describe('motion calibration and detection', () => {
 
   it('retries calibration when the pose is lost for most of the sequence', () => {
     const samples = Array.from({ length: 60 }, (_, index) => poseSample(index * 80))
-    for (let index = 20; index < 60; index += 1) samples[index] = { capturedAt: index * 80, landmarks: [], confidence: 0 }
+    for (let index = 20; index < 60; index += 1) samples[index] = { capturedAt: index * 80, landmarks: [] }
     const calibration = buildCalibration(samples.slice(0, 15), 'standing')
     if (!calibration.ok) throw new Error('calibration failed')
     expect(validateCalibrationActions(calibration.profile, samples, 'standing')).toEqual({ ok: false, issue: 'pose-lost' })
@@ -220,7 +220,7 @@ describe('motion calibration and detection', () => {
     for (let index = step * 3; index < step * 4; index += 1) samples[index] = poseSample(index * 80, { changes: { 0: { y: 0.28 } } })
     for (let index = step * 4; index < step * 5; index += 1) samples[index] = poseSample(index * 80, { changes: { 15: { y: 0.3 }, 16: { y: 0.3 } } })
     for (let index = step * 5; index < step * 6; index += 1) samples[index] = poseSample(index * 80, { changes: { 15: { x: 0.1 }, 16: { x: 0.9 } } })
-    samples[step * 3 + 2] = { capturedAt: (step * 3 + 2) * 80, landmarks: [], confidence: 0 }
+    samples[step * 3 + 2] = { capturedAt: (step * 3 + 2) * 80, landmarks: [] }
 
     const calibration = buildCalibration(samples.slice(0, step), 'seated')
     if (!calibration.ok) throw new Error('calibration failed')
