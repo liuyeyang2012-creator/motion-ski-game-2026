@@ -20,8 +20,23 @@ const dependencies = vi.hoisted(() => ({
 
 vi.mock('../../src/camera/camera-controller', () => ({
   CameraController: class {
-    start = vi.fn((...args: unknown[]) => dependencies.camera.start(...args))
-    stop = vi.fn((...args: unknown[]) => dependencies.camera.stop(...args))
+    private stream: MediaStream | null = null
+    start = vi.fn(async (video: HTMLVideoElement) => {
+      const stream = await dependencies.camera.start(video)
+      this.stream = stream
+      if (!Object.prototype.hasOwnProperty.call(video, 'srcObject')) {
+        Object.defineProperty(video, 'srcObject', { configurable: true, writable: true, value: null })
+      }
+      video.srcObject = stream
+      await video.play()
+      return stream
+    })
+    stop = vi.fn((video?: HTMLVideoElement) => {
+      ;(this.stream as (MediaStream & { getTracks?: () => Array<{ stop(): void }> }) | null)?.getTracks?.().forEach(track => track.stop())
+      this.stream = null
+      if (video) video.srcObject = null
+      dependencies.camera.stop(video)
+    })
     pause = vi.fn((...args: unknown[]) => dependencies.camera.pause(...args))
     resume = vi.fn((...args: unknown[]) => dependencies.camera.resume(...args))
 
@@ -64,8 +79,18 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reje
   return { promise, resolve, reject }
 }
 
+function fakeStream(): { stream: MediaStream; stop: ReturnType<typeof vi.fn> } {
+  const stop = vi.fn()
+  return { stream: { getTracks: () => [{ stop }] } as unknown as MediaStream, stop }
+}
+
 function startCalibration(): { controller: AppController; root: HTMLElement } {
   document.body.innerHTML = '<video id="camera-preview"></video><canvas id="game-canvas"></canvas><section id="screen-layer"></section>'
+  Object.defineProperty(document.querySelector<HTMLVideoElement>('#camera-preview')!, 'srcObject', {
+    configurable: true,
+    writable: true,
+    value: null,
+  })
   const root = document.querySelector<HTMLElement>('#screen-layer')!
   const controller = new AppController({ root, storage: localStorage })
   controller.start()
@@ -90,6 +115,7 @@ beforeEach(() => {
   dependencies.camera.resume.mockReset().mockResolvedValue(undefined)
   dependencies.createPoseClient.mockReset()
   document.body.className = ''
+  vi.spyOn(HTMLVideoElement.prototype, 'play').mockResolvedValue(undefined)
 })
 
 afterEach(() => { vi.restoreAllMocks() })
@@ -124,13 +150,18 @@ describe('calibration haptics', () => {
 
 describe('calibration async lifecycle', () => {
   it.each(['resolve', 'reject'] as const)('keeps attempt two active when attempt one settles late via %s', async settlement => {
-    const attemptOne = deferred<MediaStream>()
+    const attemptOnePlay = deferred<void>()
+    const attemptOne = fakeStream()
+    const attemptTwo = fakeStream()
     const attemptTwoPose = deferred<{ detect: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> }>()
     dependencies.camera.start
-      .mockReturnValueOnce(attemptOne.promise)
-      .mockResolvedValueOnce({} as MediaStream)
+      .mockResolvedValueOnce(attemptOne.stream)
+      .mockResolvedValueOnce(attemptTwo.stream)
     dependencies.createPoseClient.mockReturnValueOnce(attemptTwoPose.promise)
+    const play = vi.mocked(HTMLVideoElement.prototype.play)
+    play.mockReturnValueOnce(attemptOnePlay.promise).mockResolvedValue(undefined)
     const { controller, root } = startCalibration()
+    await vi.waitFor(() => expect(play).toHaveBeenCalledOnce())
     const firstCamera = dependencies.cameraInstances.find(camera => camera.start.mock.calls.length === 1)!
 
     interruptPregame(controller)
@@ -141,17 +172,43 @@ describe('calibration async lifecycle', () => {
     const secondStopsBeforeSettlement = secondCamera?.stop.mock.calls.length
     const firstStopsBeforeSettlement = firstCamera.stop.mock.calls.length
     const activeView = root.innerHTML
+    const preview = document.querySelector<HTMLVideoElement>('#camera-preview')!
+    expect(preview.srcObject).toBe(attemptTwo.stream)
 
-    if (settlement === 'resolve') attemptOne.resolve({} as MediaStream)
-    else attemptOne.reject(new Error('attempt one failed late'))
+    if (settlement === 'resolve') attemptOnePlay.resolve()
+    else attemptOnePlay.reject(new Error('attempt one failed late'))
     await vi.waitFor(() => expect(firstCamera.stop).toHaveBeenCalledTimes(firstStopsBeforeSettlement + 1))
 
     expect(secondCamera).toBeDefined()
     expect(secondCamera?.stop).toHaveBeenCalledTimes(secondStopsBeforeSettlement ?? 0)
+    expect(preview.srcObject).toBe(attemptTwo.stream)
+    expect(attemptOne.stop).toHaveBeenCalledOnce()
+    expect(attemptTwo.stop).not.toHaveBeenCalled()
     expect(document.body.classList.contains('calibrating')).toBe(true)
     expect(root.innerHTML).toBe(activeView)
     expect(root.querySelector('.game-hint')).toBeNull()
     expect(dependencies.createPoseClient).toHaveBeenCalledOnce()
+  })
+
+  it('attaches the current stream to the real preview and handles preview play failure', async () => {
+    const current = fakeStream()
+    dependencies.camera.start.mockResolvedValueOnce(current.stream)
+    const play = vi.mocked(HTMLVideoElement.prototype.play)
+    play.mockImplementation(function (this: HTMLMediaElement) {
+      return this.id === 'camera-preview' ? Promise.reject(new Error('preview play failed')) : Promise.resolve()
+    })
+    const { root } = startCalibration()
+
+    await vi.waitFor(() => expect(current.stop).toHaveBeenCalledOnce())
+
+    const preview = document.querySelector<HTMLVideoElement>('#camera-preview')!
+    expect(root.querySelector('.screen.message')).not.toBeNull()
+    expect(play.mock.instances.some(instance => instance !== preview)).toBe(true)
+    expect(play.mock.instances.filter(instance => instance === preview)).toHaveLength(1)
+    expect(preview.srcObject).toBeNull()
+    expect(current.stop).toHaveBeenCalledOnce()
+    expect(document.body.classList.contains('calibrating')).toBe(false)
+    expect(dependencies.createPoseClient).not.toHaveBeenCalled()
   })
 
   it('stops a camera that starts after pregame interruption without creating pose capture', async () => {

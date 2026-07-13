@@ -120,12 +120,24 @@ export class AppController {
       return
     }
     const camera = new CameraController()
+    const cameraTarget = document.createElement('video')
+    cameraTarget.muted = true
+    cameraTarget.playsInline = true
     this.camera = camera
     try {
-      await camera.start(video)
-    } catch (error) {
+      const stream = await camera.start(cameraTarget)
       if (!this.isCurrentCalibration(session)) {
-        camera.stop(video)
+        camera.stop()
+        cameraTarget.srcObject = null
+        return
+      }
+      video.srcObject = stream
+      await video.play()
+      cameraTarget.srcObject = null
+    } catch (error) {
+      cameraTarget.srcObject = null
+      if (!this.isCurrentCalibration(session)) {
+        camera.stop()
         return
       }
       this.clearCalibrationState()
@@ -136,7 +148,7 @@ export class AppController {
       return
     }
     if (!this.isCurrentCalibration(session)) {
-      camera.stop(video)
+      camera.stop()
       return
     }
     try {
