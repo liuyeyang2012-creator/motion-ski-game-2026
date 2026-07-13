@@ -65,7 +65,7 @@ function createSeatedFixtureSamples(): PoseSample[] {
 export class AppController {
   private root: HTMLElement
   private storage: Pick<Storage, 'getItem' | 'setItem'>
-  private camera = new CameraController()
+  private camera: CameraController | null = null
   private calibrationSession: CalibrationSession | null = null
   private detector: MotionDetector | null = null
   private game: GameState | null = null
@@ -100,7 +100,7 @@ export class AppController {
     const video = document.querySelector<HTMLVideoElement>('#camera-preview')
     const canvas = document.querySelector<HTMLCanvasElement>('#game-canvas')
     if (!video || !canvas) return
-    this.camera.stop(video)
+    this.stopCurrentCamera(video)
     this.poseClient?.dispose()
     this.poseClient = null
     window.clearTimeout(this.countdownTimer)
@@ -119,21 +119,24 @@ export class AppController {
       for (const sample of createSeatedFixtureSamples()) this.onPose(sample)
       return
     }
+    const camera = new CameraController()
+    this.camera = camera
     try {
-      await this.camera.start(video)
+      await camera.start(video)
     } catch (error) {
       if (!this.isCurrentCalibration(session)) {
-        this.camera.stop(video)
+        camera.stop(video)
         return
       }
       this.clearCalibrationState()
-      this.camera.stop(video)
+      camera.stop(video)
+      if (this.camera === camera) this.camera = null
       const copy = getCameraErrorCopy(error, window.isSecureContext)
       renderMessage(this.root, copy.title, copy.body)
       return
     }
     if (!this.isCurrentCalibration(session)) {
-      this.camera.stop(video)
+      camera.stop(video)
       return
     }
     try {
@@ -201,7 +204,7 @@ export class AppController {
     if (!this.calibrating) return
     this.clearCalibrationState()
     cancelAnimationFrame(this.captureFrame)
-    this.camera.stop(document.querySelector<HTMLVideoElement>('#camera-preview') ?? undefined)
+    this.stopCurrentCamera(document.querySelector<HTMLVideoElement>('#camera-preview') ?? undefined)
     this.poseClient?.dispose()
     this.poseClient = null
     this.detector = null
@@ -217,6 +220,12 @@ export class AppController {
 
   private isCurrentCalibration(session: CalibrationSession): boolean {
     return this.calibrating && this.calibrationSession === session
+  }
+
+  private stopCurrentCamera(video?: HTMLVideoElement): void {
+    const camera = this.camera
+    camera?.stop(video)
+    if (this.camera === camera) this.camera = null
   }
 
   private startGame(): void {
@@ -257,13 +266,13 @@ export class AppController {
     if (event === 'foregrounded' && this.game?.status === 'paused') this.showResume('重新确认位置')
     if (event === 'landscape') {
       document.body.classList.add('landscape-blocked')
-      window.clearTimeout(this.countdownTimer); cancelAnimationFrame(this.captureFrame); this.camera.pause()
+      window.clearTimeout(this.countdownTimer); cancelAnimationFrame(this.captureFrame); this.camera?.pause()
       if (this.game) this.pauseForReposition('请将手机旋转为竖屏')
       else if (this.calibrating) {
         this.pregameInterrupted = true
         this.clearCalibrationState()
         const video = document.querySelector<HTMLVideoElement>('#camera-preview')
-        this.camera.stop(video ?? undefined)
+        this.stopCurrentCamera(video ?? undefined)
         this.poseClient?.dispose(); this.poseClient = null; this.detector = null
       }
     }
@@ -283,7 +292,7 @@ export class AppController {
   private pauseForReposition(reason: string): void {
     if (this.game?.status !== 'playing') return
     this.game = { ...this.game, status: 'paused' }
-    cancelAnimationFrame(this.gameFrame); cancelAnimationFrame(this.captureFrame); this.camera.pause()
+    cancelAnimationFrame(this.gameFrame); cancelAnimationFrame(this.captureFrame); this.camera?.pause()
     this.showResume(reason)
   }
 
@@ -294,7 +303,7 @@ export class AppController {
   private async resumeGame(): Promise<void> {
     if (!this.game) return
     const video = document.querySelector<HTMLVideoElement>('#camera-preview')
-    if (!this.fixtureMode && video) await this.camera.resume(video)
+    if (!this.fixtureMode && video) await this.camera?.resume(video)
     renderMessage(this.root, '准备继续', '3 · 2 · 1')
     window.setTimeout(() => {
       if (!this.game) return
@@ -311,7 +320,7 @@ export class AppController {
     this.clearCalibrationState()
     cancelAnimationFrame(this.gameFrame)
     cancelAnimationFrame(this.captureFrame)
-    this.camera.stop(document.querySelector<HTMLVideoElement>('#camera-preview') ?? undefined)
+    this.stopCurrentCamera(document.querySelector<HTMLVideoElement>('#camera-preview') ?? undefined)
     this.poseClient?.dispose()
     const sessionResult = { score: this.game.score, bestCombo: this.game.bestCombo, activeMs: this.game.elapsedMs, ...this.choice }
     saveRecords(this.storage, recordResult(loadRecords(this.storage), sessionResult))

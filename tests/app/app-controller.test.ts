@@ -9,15 +9,23 @@ const dependencies = vi.hoisted(() => ({
     pause: vi.fn(),
     resume: vi.fn(),
   },
+  cameraInstances: [] as Array<{
+    start: ReturnType<typeof vi.fn>
+    stop: ReturnType<typeof vi.fn>
+    pause: ReturnType<typeof vi.fn>
+    resume: ReturnType<typeof vi.fn>
+  }>,
   createPoseClient: vi.fn(),
 }))
 
 vi.mock('../../src/camera/camera-controller', () => ({
   CameraController: class {
-    start = dependencies.camera.start
-    stop = dependencies.camera.stop
-    pause = dependencies.camera.pause
-    resume = dependencies.camera.resume
+    start = vi.fn((...args: unknown[]) => dependencies.camera.start(...args))
+    stop = vi.fn((...args: unknown[]) => dependencies.camera.stop(...args))
+    pause = vi.fn((...args: unknown[]) => dependencies.camera.pause(...args))
+    resume = vi.fn((...args: unknown[]) => dependencies.camera.resume(...args))
+
+    constructor() { dependencies.cameraInstances.push(this) }
   },
 }))
 
@@ -70,7 +78,12 @@ function interruptPregame(controller: AppController): void {
   ;(controller as unknown as { onLifecycle(event: LifecycleEvent): void }).onLifecycle('landscape')
 }
 
+function setPortrait(controller: AppController): void {
+  ;(controller as unknown as { onLifecycle(event: LifecycleEvent): void }).onLifecycle('portrait')
+}
+
 beforeEach(() => {
+  dependencies.cameraInstances.length = 0
   dependencies.camera.start.mockReset().mockResolvedValue({} as MediaStream)
   dependencies.camera.stop.mockReset()
   dependencies.camera.pause.mockReset()
@@ -110,6 +123,37 @@ describe('calibration haptics', () => {
 })
 
 describe('calibration async lifecycle', () => {
+  it.each(['resolve', 'reject'] as const)('keeps attempt two active when attempt one settles late via %s', async settlement => {
+    const attemptOne = deferred<MediaStream>()
+    const attemptTwoPose = deferred<{ detect: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> }>()
+    dependencies.camera.start
+      .mockReturnValueOnce(attemptOne.promise)
+      .mockResolvedValueOnce({} as MediaStream)
+    dependencies.createPoseClient.mockReturnValueOnce(attemptTwoPose.promise)
+    const { controller, root } = startCalibration()
+    const firstCamera = dependencies.cameraInstances.find(camera => camera.start.mock.calls.length === 1)!
+
+    interruptPregame(controller)
+    setPortrait(controller)
+    ;(root.querySelector('form') as HTMLFormElement).requestSubmit()
+    await vi.waitFor(() => expect(dependencies.createPoseClient).toHaveBeenCalledOnce())
+    const secondCamera = dependencies.cameraInstances.find(camera => camera !== firstCamera && camera.start.mock.calls.length === 1)
+    const secondStopsBeforeSettlement = secondCamera?.stop.mock.calls.length
+    const firstStopsBeforeSettlement = firstCamera.stop.mock.calls.length
+    const activeView = root.innerHTML
+
+    if (settlement === 'resolve') attemptOne.resolve({} as MediaStream)
+    else attemptOne.reject(new Error('attempt one failed late'))
+    await vi.waitFor(() => expect(firstCamera.stop).toHaveBeenCalledTimes(firstStopsBeforeSettlement + 1))
+
+    expect(secondCamera).toBeDefined()
+    expect(secondCamera?.stop).toHaveBeenCalledTimes(secondStopsBeforeSettlement ?? 0)
+    expect(document.body.classList.contains('calibrating')).toBe(true)
+    expect(root.innerHTML).toBe(activeView)
+    expect(root.querySelector('.game-hint')).toBeNull()
+    expect(dependencies.createPoseClient).toHaveBeenCalledOnce()
+  })
+
   it('stops a camera that starts after pregame interruption without creating pose capture', async () => {
     const pendingCamera = deferred<MediaStream>()
     dependencies.camera.start.mockReturnValueOnce(pendingCamera.promise)

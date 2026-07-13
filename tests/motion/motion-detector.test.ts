@@ -110,8 +110,12 @@ describe('motion calibration and detection', () => {
       kneeY: 0.9,
     }
     const cases: Array<{ field: 'torsoCenterX' | 'headY' | 'hipY'; value: number; style: 'seated' | 'standing'; sample: ReturnType<typeof poseSample> }> = [
+      { field: 'torsoCenterX', value: Number.NaN, style: 'seated', sample: poseSample(0) },
       { field: 'torsoCenterX', value: Number.POSITIVE_INFINITY, style: 'seated', sample: poseSample(0) },
+      { field: 'headY', value: Number.NaN, style: 'seated', sample: poseSample(0) },
       { field: 'headY', value: Number.NEGATIVE_INFINITY, style: 'seated', sample: poseSample(0) },
+      { field: 'hipY', value: Number.NaN, style: 'standing', sample: poseSample(0, { changes: { 23: { y: 0.82 }, 24: { y: 0.82 } } }) },
+      { field: 'hipY', value: Number.POSITIVE_INFINITY, style: 'standing', sample: poseSample(0, { changes: { 23: { y: 0.82 }, 24: { y: 0.82 } } }) },
       { field: 'hipY', value: Number.NEGATIVE_INFINITY, style: 'standing', sample: poseSample(0, { changes: { 23: { y: 0.82 }, 24: { y: 0.82 } } }) },
     ]
 
@@ -136,7 +140,9 @@ describe('motion calibration and detection', () => {
     }
     const standingProfile = { ...seatedProfile, hipY: 0.7, kneeY: 0.9 }
     const cases = [
+      { name: 'lean NaN', profile: seatedProfile, style: 'seated' as const, changes: { 11: { x: Number.NaN } } },
       { name: 'lean', profile: seatedProfile, style: 'seated' as const, changes: { 11: { x: Number.NEGATIVE_INFINITY } } },
+      { name: 'duck NaN', profile: seatedProfile, style: 'seated' as const, changes: { 0: { y: Number.NaN } } },
       { name: 'duck', profile: seatedProfile, style: 'seated' as const, changes: { 0: { y: Number.POSITIVE_INFINITY } } },
       { name: 'hands-up', profile: seatedProfile, style: 'seated' as const, changes: { 15: { y: Number.NEGATIVE_INFINITY }, 16: { y: Number.NEGATIVE_INFINITY } } },
       { name: 'reach', profile: seatedProfile, style: 'seated' as const, changes: { 15: { x: Number.NEGATIVE_INFINITY }, 16: { x: Number.POSITIVE_INFINITY } } },
@@ -149,6 +155,34 @@ describe('motion calibration and detection', () => {
         .map(capturedAt => poseSample(capturedAt, { changes: entry.changes }))
         .flatMap(sample => detector.update(sample))
       expect(events, entry.name).toEqual([])
+    }
+  })
+
+  it('still emits every normal motion with finite inputs', () => {
+    const seatedProfile: CalibrationProfile = {
+      shoulderWidth: 0.2,
+      torsoCenterX: 0.5,
+      headY: 0.2,
+      wristY: 0.65,
+      hipY: null,
+      kneeY: null,
+    }
+    const standingProfile = { ...seatedProfile, hipY: 0.7, kneeY: 0.9 }
+    const cases = [
+      { expected: 'lean-left', profile: seatedProfile, style: 'seated' as const, changes: { 11: { x: 0.3 }, 12: { x: 0.5 } } },
+      { expected: 'duck', profile: seatedProfile, style: 'seated' as const, changes: { 0: { y: 0.3 } } },
+      { expected: 'hands-up', profile: seatedProfile, style: 'seated' as const, changes: { 15: { y: 0.3 }, 16: { y: 0.3 } } },
+      { expected: 'reach-left', profile: seatedProfile, style: 'seated' as const, changes: { 15: { x: 0.1 }, 16: { x: 0.9 } } },
+      { expected: 'reach-right', profile: seatedProfile, style: 'seated' as const, changes: { 15: { x: 0.1 }, 16: { x: 0.9 } } },
+      { expected: 'squat', profile: standingProfile, style: 'standing' as const, changes: { 23: { y: 0.82 }, 24: { y: 0.82 } } },
+    ]
+
+    for (const entry of cases) {
+      const detector = new MotionDetector(entry.profile, entry.style)
+      const events = [200, 340]
+        .map(capturedAt => poseSample(capturedAt, { changes: entry.changes }))
+        .flatMap(sample => detector.update(sample))
+      expect(events.map(event => event.type), entry.expected).toContain(entry.expected)
     }
   })
 
