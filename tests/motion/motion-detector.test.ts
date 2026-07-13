@@ -100,6 +100,58 @@ describe('motion calibration and detection', () => {
     expect(events.map(event => event.type)).not.toContain('squat')
   })
 
+  it('rejects non-finite profile baselines instead of crossing motion thresholds', () => {
+    const profile: CalibrationProfile = {
+      shoulderWidth: 0.2,
+      torsoCenterX: 0.5,
+      headY: 0.2,
+      wristY: 0.65,
+      hipY: 0.7,
+      kneeY: 0.9,
+    }
+    const cases: Array<{ field: 'torsoCenterX' | 'headY' | 'hipY'; value: number; style: 'seated' | 'standing'; sample: ReturnType<typeof poseSample> }> = [
+      { field: 'torsoCenterX', value: Number.POSITIVE_INFINITY, style: 'seated', sample: poseSample(0) },
+      { field: 'headY', value: Number.NEGATIVE_INFINITY, style: 'seated', sample: poseSample(0) },
+      { field: 'hipY', value: Number.NEGATIVE_INFINITY, style: 'standing', sample: poseSample(0, { changes: { 23: { y: 0.82 }, 24: { y: 0.82 } } }) },
+    ]
+
+    for (const entry of cases) {
+      const detector = new MotionDetector({ ...profile, [entry.field]: entry.value }, entry.style)
+      const events = [
+        { ...entry.sample, capturedAt: 200 },
+        { ...entry.sample, capturedAt: 340 },
+      ].flatMap(sample => detector.update(sample))
+      expect(events, entry.field).toEqual([])
+    }
+  })
+
+  it('rejects non-finite landmark coordinates for every affected motion', () => {
+    const seatedProfile: CalibrationProfile = {
+      shoulderWidth: 0.2,
+      torsoCenterX: 0.5,
+      headY: 0.2,
+      wristY: 0.65,
+      hipY: null,
+      kneeY: null,
+    }
+    const standingProfile = { ...seatedProfile, hipY: 0.7, kneeY: 0.9 }
+    const cases = [
+      { name: 'lean', profile: seatedProfile, style: 'seated' as const, changes: { 11: { x: Number.NEGATIVE_INFINITY } } },
+      { name: 'duck', profile: seatedProfile, style: 'seated' as const, changes: { 0: { y: Number.POSITIVE_INFINITY } } },
+      { name: 'hands-up', profile: seatedProfile, style: 'seated' as const, changes: { 15: { y: Number.NEGATIVE_INFINITY }, 16: { y: Number.NEGATIVE_INFINITY } } },
+      { name: 'reach', profile: seatedProfile, style: 'seated' as const, changes: { 15: { x: Number.NEGATIVE_INFINITY }, 16: { x: Number.POSITIVE_INFINITY } } },
+      { name: 'squat', profile: standingProfile, style: 'standing' as const, changes: { 23: { y: Number.POSITIVE_INFINITY }, 24: { y: Number.POSITIVE_INFINITY } } },
+    ]
+
+    for (const entry of cases) {
+      const detector = new MotionDetector(entry.profile, entry.style)
+      const events = [200, 340]
+        .map(capturedAt => poseSample(capturedAt, { changes: entry.changes }))
+        .flatMap(sample => detector.update(sample))
+      expect(events, entry.name).toEqual([])
+    }
+  })
+
   it('rejects motionless prompted calibration actions', () => {
     const samples = Array.from({ length: 60 }, (_, index) => poseSample(index * 80))
     const calibration = buildCalibration(samples.slice(0, 15), 'standing')

@@ -1,5 +1,38 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CalibrationPhase, CalibrationSnapshot } from '../../src/motion/calibration-session'
+import type { LifecycleEvent } from '../../src/platform/lifecycle'
+
+const dependencies = vi.hoisted(() => ({
+  camera: {
+    start: vi.fn(),
+    stop: vi.fn(),
+    pause: vi.fn(),
+    resume: vi.fn(),
+  },
+  createPoseClient: vi.fn(),
+}))
+
+vi.mock('../../src/camera/camera-controller', () => ({
+  CameraController: class {
+    start = dependencies.camera.start
+    stop = dependencies.camera.stop
+    pause = dependencies.camera.pause
+    resume = dependencies.camera.resume
+  },
+}))
+
+vi.mock('../../src/pose/direct-pose-client', () => ({
+  createDirectPoseClient: dependencies.createPoseClient,
+}))
+
+vi.mock('../../src/render/ski-renderer', () => ({
+  SkiRenderer: class {
+    resize = vi.fn()
+    recordFrameDuration = vi.fn()
+    render = vi.fn()
+  },
+}))
+
 import { AppController, getCameraErrorCopy, shouldCapturePose, shouldVibrate } from '../../src/app/app-controller'
 
 function calibrationSnapshot(phase: CalibrationPhase): CalibrationSnapshot {
@@ -15,6 +48,38 @@ function calibrationSnapshot(phase: CalibrationPhase): CalibrationSnapshot {
     profile: null,
   }
 }
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason: unknown) => void } {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((onResolve, onReject) => { resolve = onResolve; reject = onReject })
+  return { promise, resolve, reject }
+}
+
+function startCalibration(): { controller: AppController; root: HTMLElement } {
+  document.body.innerHTML = '<video id="camera-preview"></video><canvas id="game-canvas"></canvas><section id="screen-layer"></section>'
+  const root = document.querySelector<HTMLElement>('#screen-layer')!
+  const controller = new AppController({ root, storage: localStorage })
+  controller.start()
+  ;(root.querySelector('[data-testid="start"]') as HTMLButtonElement).click()
+  ;(root.querySelector('form') as HTMLFormElement).requestSubmit()
+  return { controller, root }
+}
+
+function interruptPregame(controller: AppController): void {
+  ;(controller as unknown as { onLifecycle(event: LifecycleEvent): void }).onLifecycle('landscape')
+}
+
+beforeEach(() => {
+  dependencies.camera.start.mockReset().mockResolvedValue({} as MediaStream)
+  dependencies.camera.stop.mockReset()
+  dependencies.camera.pause.mockReset()
+  dependencies.camera.resume.mockReset().mockResolvedValue(undefined)
+  dependencies.createPoseClient.mockReset()
+  document.body.className = ''
+})
+
+afterEach(() => { vi.restoreAllMocks() })
 
 describe('AppController', () => {
   it('moves from welcome to setup and preserves local defaults', () => {
@@ -41,6 +106,76 @@ describe('calibration haptics', () => {
     expect(shouldVibrate(calibrationSnapshot('framing'), calibrationSnapshot('action'))).toBe(false)
     expect(shouldVibrate(calibrationSnapshot('action'), calibrationSnapshot('framing'))).toBe(false)
     expect(shouldVibrate(calibrationSnapshot('step-success'), calibrationSnapshot('action'))).toBe(false)
+  })
+})
+
+describe('calibration async lifecycle', () => {
+  it('stops a camera that starts after pregame interruption without creating pose capture', async () => {
+    const pendingCamera = deferred<MediaStream>()
+    dependencies.camera.start.mockReturnValueOnce(pendingCamera.promise)
+    const { controller, root } = startCalibration()
+    interruptPregame(controller)
+    const interruptedView = root.innerHTML
+    const stopsBeforeSettlement = dependencies.camera.stop.mock.calls.length
+
+    pendingCamera.resolve({} as MediaStream)
+    await vi.waitFor(() => expect(dependencies.camera.stop).toHaveBeenCalledTimes(stopsBeforeSettlement + 1))
+
+    expect(root.innerHTML).toBe(interruptedView)
+    expect(dependencies.createPoseClient).not.toHaveBeenCalled()
+    expect(root.querySelector('.game-hint')).toBeNull()
+  })
+
+  it('ignores a camera failure that settles after pregame interruption', async () => {
+    const pendingCamera = deferred<MediaStream>()
+    dependencies.camera.start.mockReturnValueOnce(pendingCamera.promise)
+    const { controller, root } = startCalibration()
+    interruptPregame(controller)
+    const interruptedView = root.innerHTML
+    const stopsBeforeSettlement = dependencies.camera.stop.mock.calls.length
+
+    pendingCamera.reject(new DOMException('denied', 'NotAllowedError'))
+    await vi.waitFor(() => expect(dependencies.camera.stop).toHaveBeenCalledTimes(stopsBeforeSettlement + 1))
+
+    expect(root.innerHTML).toBe(interruptedView)
+    expect(dependencies.createPoseClient).not.toHaveBeenCalled()
+    expect(document.body.classList.contains('calibrating')).toBe(false)
+  })
+
+  it('disposes a pose client that resolves after pregame interruption without scheduling capture', async () => {
+    const pendingPoseClient = deferred<{ detect: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> }>()
+    const client = { detect: vi.fn(), dispose: vi.fn() }
+    dependencies.createPoseClient.mockReturnValueOnce(pendingPoseClient.promise)
+    const animationFrame = vi.spyOn(globalThis, 'requestAnimationFrame')
+    const { controller, root } = startCalibration()
+    await vi.waitFor(() => expect(dependencies.createPoseClient).toHaveBeenCalledOnce())
+    interruptPregame(controller)
+    const interruptedView = root.innerHTML
+
+    pendingPoseClient.resolve(client)
+    await vi.waitFor(() => expect(client.dispose).toHaveBeenCalledOnce())
+
+    expect(root.innerHTML).toBe(interruptedView)
+    expect(animationFrame).not.toHaveBeenCalled()
+    expect(document.body.classList.contains('calibrating')).toBe(false)
+  })
+
+  it('ignores a pose client failure that settles after pregame interruption', async () => {
+    const pendingPoseClient = deferred<never>()
+    dependencies.createPoseClient.mockReturnValueOnce(pendingPoseClient.promise)
+    const animationFrame = vi.spyOn(globalThis, 'requestAnimationFrame')
+    const { controller, root } = startCalibration()
+    await vi.waitFor(() => expect(dependencies.createPoseClient).toHaveBeenCalledOnce())
+    interruptPregame(controller)
+    const interruptedView = root.innerHTML
+
+    pendingPoseClient.reject(new Error('initialization failed'))
+    await Promise.resolve()
+    await Promise.resolve()
+
+    expect(root.innerHTML).toBe(interruptedView)
+    expect(animationFrame).not.toHaveBeenCalled()
+    expect(document.body.classList.contains('calibrating')).toBe(false)
   })
 })
 

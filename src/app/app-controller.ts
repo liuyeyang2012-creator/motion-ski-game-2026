@@ -109,7 +109,8 @@ export class AppController {
     this.pendingMotions = []
     this.calibrating = true
     this.pregameInterrupted = false
-    this.calibrationSession = new CalibrationSession(this.choice.playStyle)
+    const session = new CalibrationSession(this.choice.playStyle)
+    this.calibrationSession = session
     document.body.classList.add('calibrating')
     renderCalibration(this.root, this.calibrationSession.snapshot())
     this.renderer = new SkiRenderer(canvas)
@@ -121,21 +122,42 @@ export class AppController {
     try {
       await this.camera.start(video)
     } catch (error) {
+      if (!this.isCurrentCalibration(session)) {
+        this.camera.stop(video)
+        return
+      }
       this.clearCalibrationState()
       this.camera.stop(video)
       const copy = getCameraErrorCopy(error, window.isSecureContext)
       renderMessage(this.root, copy.title, copy.body)
       return
     }
+    if (!this.isCurrentCalibration(session)) {
+      this.camera.stop(video)
+      return
+    }
     try {
-      this.poseClient = await createDirectPoseClient(
+      let client: DirectPoseClient | null = null
+      client = await createDirectPoseClient(
         document.baseURI,
-        sample => this.onPose(sample),
-        () => this.stopCalibrationWithError('体感识别遇到问题，请刷新页面后重试'),
+        sample => {
+          if (this.calibrationSession === session || (client !== null && this.poseClient === client)) this.onPose(sample)
+        },
+        () => {
+          if (this.calibrationSession === session || (client !== null && this.poseClient === client)) {
+            this.stopCalibrationWithError('体感识别遇到问题，请刷新页面后重试')
+          }
+        },
       )
+      if (!this.isCurrentCalibration(session)) {
+        client.dispose()
+        return
+      }
+      this.poseClient = client
       this.lastInference = 0
       this.captureFrame = requestAnimationFrame(time => this.captureLoop(time, video))
     } catch {
+      if (!this.isCurrentCalibration(session)) return
       this.stopCalibrationWithError('识别组件加载失败，请检查网络后刷新页面重试')
     }
   }
@@ -191,6 +213,10 @@ export class AppController {
     this.calibrationSession = null
     document.body.classList.remove('calibrating')
     window.clearTimeout(this.countdownTimer)
+  }
+
+  private isCurrentCalibration(session: CalibrationSession): boolean {
+    return this.calibrating && this.calibrationSession === session
   }
 
   private startGame(): void {
