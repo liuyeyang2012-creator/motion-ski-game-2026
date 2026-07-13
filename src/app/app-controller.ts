@@ -1,19 +1,14 @@
 import { CameraController } from '../camera/camera-controller'
 import { advanceGame, createGame } from '../game/game-engine'
 import type { GameState } from '../game/types'
-import {
-  buildCalibration,
-  CALIBRATION_SAMPLES_PER_STEP,
-  CALIBRATION_TOTAL_SAMPLES,
-  getCalibrationPrompt,
-  validateCalibrationActions,
-} from '../motion/calibration'
+import { CalibrationSession, type CalibrationSnapshot } from '../motion/calibration-session'
 import { MotionDetector, type MotionEvent } from '../motion/motion-detector'
 import { createDirectPoseClient, DirectPoseClient } from '../pose/direct-pose-client'
 import { LifecycleMonitor, type LifecycleEvent } from '../platform/lifecycle'
 import type { PoseSample } from '../pose/types'
 import { SkiRenderer } from '../render/ski-renderer'
 import { loadRecords, recordResult, saveRecords } from '../storage/player-records'
+import { renderCalibration } from '../ui/calibration-view'
 import { renderMessage, renderResults, renderResume, renderSetup, renderWelcome, type SetupChoice } from '../ui/screens'
 
 interface Options { root: HTMLElement; storage: Pick<Storage, 'getItem' | 'setItem'>; fixtureMode?: boolean }
@@ -32,11 +27,46 @@ export function shouldCapturePose(calibrating: boolean, gameStatus?: GameState['
   return calibrating || gameStatus === 'playing'
 }
 
+export function shouldVibrate(previous: CalibrationSnapshot, next: CalibrationSnapshot): boolean {
+  return previous.phase !== 'step-success' && next.phase === 'step-success'
+}
+
+function createSeatedFixtureSamples(): PoseSample[] {
+  const sample = (capturedAt: number, changes: Record<number, Partial<{ x: number; y: number }>> = {}): PoseSample => {
+    const landmarks = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, z: 0, visibility: 1 }))
+    Object.assign(landmarks[0], { x: 0.5, y: 0.2 })
+    Object.assign(landmarks[11], { x: 0.4, y: 0.4 })
+    Object.assign(landmarks[12], { x: 0.6, y: 0.4 })
+    Object.assign(landmarks[15], { x: 0.4, y: 0.65 })
+    Object.assign(landmarks[16], { x: 0.6, y: 0.65 })
+    Object.assign(landmarks[23], { x: 0.43, y: 0.7 })
+    Object.assign(landmarks[24], { x: 0.57, y: 0.7 })
+    Object.assign(landmarks[25], { x: 0.43, y: 0.9 })
+    Object.assign(landmarks[26], { x: 0.57, y: 0.9 })
+    for (const [index, change] of Object.entries(changes)) Object.assign(landmarks[Number(index)], change)
+    return { capturedAt, landmarks, confidence: 0.95 }
+  }
+  const action = (start: number, changes: Record<number, Partial<{ x: number; y: number }>>) => [
+    sample(start, changes),
+    sample(start + 400, changes),
+    sample(start + 850),
+  ]
+
+  return [
+    ...Array.from({ length: 8 }, (_, index) => sample(index * 100)),
+    ...action(800, { 11: { x: 0.3 }, 12: { x: 0.5 } }),
+    ...action(1750, { 11: { x: 0.5 }, 12: { x: 0.7 } }),
+    ...action(2700, { 0: { y: 0.3 } }),
+    ...action(3650, { 15: { y: 0.3 }, 16: { y: 0.3 } }),
+    ...action(4600, { 15: { x: 0.1 }, 16: { x: 0.9 } }),
+  ]
+}
+
 export class AppController {
   private root: HTMLElement
   private storage: Pick<Storage, 'getItem' | 'setItem'>
   private camera = new CameraController()
-  private samples: PoseSample[] = []
+  private calibrationSession: CalibrationSession | null = null
   private detector: MotionDetector | null = null
   private game: GameState | null = null
   private renderer: SkiRenderer | null = null
@@ -72,35 +102,37 @@ export class AppController {
     if (!video || !canvas) return
     this.camera.stop(video)
     this.poseClient?.dispose()
+    this.poseClient = null
+    window.clearTimeout(this.countdownTimer)
     this.detector = null
+    this.game = null
+    this.pendingMotions = []
     this.calibrating = true
     this.pregameInterrupted = false
-    renderMessage(this.root, '请调整位置', this.choice.playStyle === 'standing' ? '后退一点，让肩膀、髋部和膝盖进入画面' : '坐直身体，让肩膀和髋部进入画面')
+    this.calibrationSession = new CalibrationSession(this.choice.playStyle)
+    document.body.classList.add('calibrating')
+    renderCalibration(this.root, this.calibrationSession.snapshot())
+    this.renderer = new SkiRenderer(canvas)
+    this.renderer.resize(canvas.clientWidth || 390, canvas.clientHeight || 844, Math.min(devicePixelRatio || 1, 2))
     if (this.fixtureMode) {
-      this.renderer = new SkiRenderer(canvas)
-      this.renderer.resize(canvas.clientWidth || 390, canvas.clientHeight || 844, Math.min(devicePixelRatio || 1, 2))
-      this.countdownTimer = window.setTimeout(() => this.startGame(), 50)
+      for (const sample of createSeatedFixtureSamples()) this.onPose(sample)
       return
     }
     try {
       await this.camera.start(video)
     } catch (error) {
+      this.clearCalibrationState()
       this.camera.stop(video)
       const copy = getCameraErrorCopy(error, window.isSecureContext)
       renderMessage(this.root, copy.title, copy.body)
       return
     }
-    video.style.opacity = '0.2'
     try {
-      renderMessage(this.root, '正在启动体感识别', '第一次载入可能需要几秒，请保持在画面中央')
       this.poseClient = await createDirectPoseClient(
         document.baseURI,
         sample => this.onPose(sample),
         () => this.stopCalibrationWithError('体感识别遇到问题，请刷新页面后重试'),
       )
-      this.renderer = new SkiRenderer(canvas)
-      this.renderer.resize(canvas.clientWidth || 390, canvas.clientHeight || 844, Math.min(devicePixelRatio || 1, 2))
-      this.samples = []
       this.lastInference = 0
       this.captureFrame = requestAnimationFrame(time => this.captureLoop(time, video))
     } catch {
@@ -119,31 +151,23 @@ export class AppController {
   }
 
   private onPose(sample: PoseSample): void {
-    if (!this.detector) {
-      this.samples.push(sample)
-      if (this.samples.length >= CALIBRATION_SAMPLES_PER_STEP && this.samples.length % CALIBRATION_SAMPLES_PER_STEP === 0) {
-        const prompt = getCalibrationPrompt(this.samples.length, this.choice.playStyle)
-        if (prompt) renderMessage(this.root, '动作校准', prompt)
+    if (this.calibrating) {
+      const session = this.calibrationSession
+      if (!session) return
+      const previous = session.snapshot()
+      const next = session.update(sample)
+      renderCalibration(this.root, next)
+      if (shouldVibrate(previous, next)) {
+        try { navigator.vibrate?.(35) } catch { /* Haptics are optional. */ }
       }
-      if (this.samples.length < CALIBRATION_TOTAL_SAMPLES) return
-      const calibration = buildCalibration(this.samples.slice(0, CALIBRATION_SAMPLES_PER_STEP), this.choice.playStyle)
-      if (!calibration.ok) {
-        const copy = calibration.issue === 'hips-not-visible' ? '请后退一点，让肩膀和髋部进入画面' : '请保持身体稳定，并改善环境光'
-        renderMessage(this.root, '还差一点', copy)
-        this.samples = []
-        return
+      if (next.phase === 'complete' && next.profile && !this.detector) {
+        this.detector = new MotionDetector(next.profile, this.choice.playStyle)
+        renderMessage(this.root, '校准完成', '3 · 2 · 1，准备出发！')
+        this.countdownTimer = window.setTimeout(() => this.startGame(), 900)
       }
-      const actions = validateCalibrationActions(calibration.profile, this.samples, this.choice.playStyle)
-      if (!actions.ok) {
-        renderMessage(this.root, '动作还不够清楚', '请按提示稍微加大动作幅度，我们重新校准一次。')
-        this.samples = []
-        return
-      }
-      this.detector = new MotionDetector(calibration.profile, this.choice.playStyle)
-      renderMessage(this.root, '校准完成', '3 · 2 · 1，准备出发！')
-      this.countdownTimer = window.setTimeout(() => this.startGame(), 900)
       return
     }
+    if (!this.detector || this.game?.status !== 'playing') return
     if (sample.confidence < 0.6) {
       this.pauseForReposition('请重新进入画面')
       return
@@ -153,17 +177,25 @@ export class AppController {
 
   private stopCalibrationWithError(message: string): void {
     if (!this.calibrating) return
-    this.calibrating = false
+    this.clearCalibrationState()
     cancelAnimationFrame(this.captureFrame)
     this.camera.stop(document.querySelector<HTMLVideoElement>('#camera-preview') ?? undefined)
     this.poseClient?.dispose()
     this.poseClient = null
+    this.detector = null
     renderMessage(this.root, '体感识别未能启动', message)
   }
 
-  private startGame(): void {
-    if (this.pregameInterrupted) return
+  private clearCalibrationState(): void {
     this.calibrating = false
+    this.calibrationSession = null
+    document.body.classList.remove('calibrating')
+    window.clearTimeout(this.countdownTimer)
+  }
+
+  private startGame(): void {
+    if (this.pregameInterrupted || !this.detector) return
+    this.clearCalibrationState()
     this.root.innerHTML = '<div class="game-hint">侧身变道 · 低头过门 · 抬手加速</div>'
     this.game = createGame({ ...this.choice, seed: Date.now() })
     if (this.fixtureMode && this.choice.sessionKind === 'quick') {
@@ -203,8 +235,7 @@ export class AppController {
       if (this.game) this.pauseForReposition('请将手机旋转为竖屏')
       else if (this.calibrating) {
         this.pregameInterrupted = true
-        this.calibrating = false
-        this.samples = []
+        this.clearCalibrationState()
         const video = document.querySelector<HTMLVideoElement>('#camera-preview')
         this.camera.stop(video ?? undefined)
         this.poseClient?.dispose(); this.poseClient = null; this.detector = null
@@ -251,6 +282,7 @@ export class AppController {
 
   private finishGame(): void {
     if (!this.game) return
+    this.clearCalibrationState()
     cancelAnimationFrame(this.gameFrame)
     cancelAnimationFrame(this.captureFrame)
     this.camera.stop(document.querySelector<HTMLVideoElement>('#camera-preview') ?? undefined)

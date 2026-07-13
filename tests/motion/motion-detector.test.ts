@@ -7,6 +7,7 @@ import {
   validateCalibrationActions,
 } from '../../src/motion/calibration'
 import { MotionDetector } from '../../src/motion/motion-detector'
+import type { CalibrationProfile } from '../../src/motion/calibration'
 import { poseSample } from '../support/pose-sample'
 
 describe('motion calibration and detection', () => {
@@ -35,6 +36,67 @@ describe('motion calibration and detection', () => {
     const detector = new MotionDetector(calibration.profile, 'seated')
     const events = [poseSample(200, { changes: { 23: { y: 0.82 }, 24: { y: 0.82 } } }), poseSample(340, { changes: { 23: { y: 0.82 }, 24: { y: 0.82 } } })]
       .flatMap(value => detector.update(value))
+    expect(events.map(event => event.type)).not.toContain('squat')
+  })
+
+  it('detects seated upper-body motion without lower-body landmarks', () => {
+    const profile: CalibrationProfile = {
+      shoulderWidth: 0.2,
+      torsoCenterX: 0.5,
+      headY: 0.2,
+      wristY: 0.65,
+      hipY: null,
+      kneeY: null,
+    }
+    const detector = new MotionDetector(profile, 'seated')
+    const upperBodyLean = (capturedAt: number) => {
+      const sample = poseSample(capturedAt, { changes: { 11: { x: 0.3 }, 12: { x: 0.5 } } })
+      return { ...sample, landmarks: sample.landmarks.slice(0, 17) }
+    }
+
+    const events = [upperBodyLean(200), upperBodyLean(340)]
+      .flatMap(sample => detector.update(sample))
+
+    expect(events.map(event => event.type)).toEqual(['lean-left'])
+  })
+
+  it('does not emit a standing squat when hips are hidden', () => {
+    const profile: CalibrationProfile = {
+      shoulderWidth: 0.2,
+      torsoCenterX: 0.5,
+      headY: 0.2,
+      wristY: 0.65,
+      hipY: 0.7,
+      kneeY: 0.9,
+    }
+    const detector = new MotionDetector(profile, 'standing')
+    const hiddenSquat = (capturedAt: number) => poseSample(capturedAt, {
+      hidden: [23, 24],
+      changes: { 23: { y: 0.82 }, 24: { y: 0.82 } },
+    })
+
+    const events = [hiddenSquat(200), hiddenSquat(340)]
+      .flatMap(sample => detector.update(sample))
+
+    expect(events.map(event => event.type)).not.toContain('squat')
+  })
+
+  it('requires a numeric standing hip baseline before detecting squat', () => {
+    const profile: CalibrationProfile = {
+      shoulderWidth: 0.2,
+      torsoCenterX: 0.5,
+      headY: 0.2,
+      wristY: 0.65,
+      hipY: null,
+      kneeY: null,
+    }
+    const detector = new MotionDetector(profile, 'standing')
+    const squat = (capturedAt: number) => poseSample(capturedAt, {
+      changes: { 23: { y: 0.82 }, 24: { y: 0.82 } },
+    })
+
+    const events = [squat(200), squat(340)].flatMap(sample => detector.update(sample))
+
     expect(events.map(event => event.type)).not.toContain('squat')
   })
 
