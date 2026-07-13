@@ -1,5 +1,6 @@
 import type { CalibrationSnapshot } from '../motion/calibration-session'
-import type { CalibrationAction, FramingIssue } from '../motion/calibration'
+import type { CalibrationAction, CalibrationFeedbackCode } from '../motion/calibration'
+import { renderPoseOverlay } from './pose-overlay'
 
 const actionInstructions: Record<CalibrationAction, string> = {
   'lean-left': '向左侧身',
@@ -10,26 +11,60 @@ const actionInstructions: Record<CalibrationAction, string> = {
   squat: '缓慢下蹲',
 }
 
-const framingInstructions: Record<FramingIssue, string> = {
-  'head-not-visible': '请调整手机角度，让头部进入框内',
-  'shoulders-not-visible': '请把双肩放入高亮框',
-  'hands-not-visible': '请把双手放入高亮框',
-  'lower-body-not-visible': '请稍微后退，让髋部和膝盖进入框内',
-  'pose-lost': '请回到高亮框中央',
+const feedbackCopy: Record<CalibrationFeedbackCode, string> = {
+  'body-not-found': '请站到高亮框内',
+  'head-missing': '请调整手机，让头部进入画面',
+  'shoulders-missing': '请把双肩放入高亮框',
+  'left-hand-missing': '请让左手进入画面',
+  'right-hand-missing': '请让右手进入画面',
+  'hips-missing': '请调整手机，让髋部进入画面',
+  'knees-missing': '请稍微后退，让膝盖进入画面',
+  'move-left': '身体已识别，请再向左一点',
+  'move-right': '身体已识别，请再向右一点',
+  'lower-head': '头部已识别，请再低一点',
+  'raise-left-hand': '右手已识别，请抬高左手',
+  'raise-right-hand': '左手已识别，请抬高右手',
+  'spread-hands': '双手已识别，请再向两侧伸展',
+  'lower-hips': '身体已识别，请缓慢下蹲',
+  hold: '动作正确，保持一下',
+}
+
+export interface CalibrationViewActions {
+  onRetryModel(): void
+  onRetryBody(): void
+  onRetryAction(): void
+  onUseRecommended(): void
+}
+
+const noActions: CalibrationViewActions = {
+  onRetryModel: () => {},
+  onRetryBody: () => {},
+  onRetryAction: () => {},
+  onUseRecommended: () => {},
 }
 
 export function getCalibrationInstruction(snapshot: CalibrationSnapshot): string {
   if (snapshot.phase === 'step-success') return '校准成功'
-  if (snapshot.framingIssue) return framingInstructions[snapshot.framingIssue]
-  if (snapshot.action) return actionInstructions[snapshot.action]
-  if (snapshot.phase === 'baseline') return '保持自然姿势'
+  if (snapshot.phase === 'camera-check') return '正在打开摄像头'
+  if (snapshot.phase === 'model-check') return '识别组件加载中'
+  if (snapshot.phase === 'model-error') return '识别组件加载失败'
   if (snapshot.phase === 'complete') return '准备完成'
+  if (snapshot.phase === 'baseline') return '保持自然姿势'
+  if (snapshot.phase === 'body-check' && snapshot.feedback) return feedbackCopy[snapshot.feedback]
+  if (snapshot.action) return actionInstructions[snapshot.action]
   return snapshot.style === 'standing' ? '让全身进入高亮框' : '让上半身进入高亮框'
 }
 
-export function renderCalibration(root: HTMLElement, snapshot: CalibrationSnapshot): void {
+export function renderCalibration(
+  root: HTMLElement,
+  snapshot: CalibrationSnapshot,
+  actions: CalibrationViewActions = noActions,
+): void {
   const successful = snapshot.phase === 'step-success'
   const screen = element('section', `calibration-screen${successful ? ' success' : ''}`)
+  if (snapshot.latestLandmarks.length > 0) {
+    screen.append(renderPoseOverlay(snapshot.latestLandmarks, snapshot.requiredIndices))
+  }
   const shade = element('div', 'calibration-shade')
   shade.setAttribute('aria-hidden', 'true')
 
@@ -40,9 +75,12 @@ export function renderCalibration(root: HTMLElement, snapshot: CalibrationSnapsh
   const status = element('div', 'calibration-status')
   status.setAttribute('role', 'status')
   status.setAttribute('aria-live', 'polite')
-
-  status.append(element('p', 'calibration-step', `第 ${snapshot.stepIndex + 1}/${snapshot.totalSteps} 步`))
+  status.append(element('p', 'calibration-stage', getStageCopy(snapshot)))
   status.append(element('h1', 'calibration-instruction', getCalibrationInstruction(snapshot)))
+
+  if (snapshot.feedback && snapshot.phase === 'action') {
+    status.append(element('p', 'calibration-feedback', feedbackCopy[snapshot.feedback]))
+  }
 
   const progress = element('div', 'calibration-progress')
   const progressFill = element('i')
@@ -50,10 +88,47 @@ export function renderCalibration(root: HTMLElement, snapshot: CalibrationSnapsh
   progressFill.style.setProperty('--calibration-progress', `${progressValue * 100}%`)
   progress.append(progressFill)
   status.append(progress)
-  status.append(element('p', 'calibration-help', '识别到动作后会自动进入下一步，无需点击。'))
+
+  if (snapshot.completedActions.length > 0) {
+    const completed = element('div', 'calibration-completed')
+    for (const action of snapshot.completedActions) completed.append(element('span', '', `✓ ${actionInstructions[action]}`))
+    status.append(completed)
+  }
+
+  if (snapshot.phase === 'model-error') {
+    status.append(actionButton('重新加载', 'retry-model', actions.onRetryModel))
+  } else if (snapshot.canRecover) {
+    const recovery = element('div', 'calibration-recovery')
+    recovery.append(
+      actionButton('重新尝试', 'retry-action', actions.onRetryAction),
+      actionButton('使用推荐灵敏度', 'use-recommended', actions.onUseRecommended),
+    )
+    status.append(recovery)
+  } else {
+    const help = snapshot.phase === 'action'
+      ? '动作正确时进度会增加，短暂识别不稳不会清零。'
+      : '请保持竖屏，并让身体处在光线充足的位置。'
+    status.append(element('p', 'calibration-help', help))
+  }
 
   screen.append(shade, frame, status)
   root.replaceChildren(screen)
+}
+
+function getStageCopy(snapshot: CalibrationSnapshot): string {
+  if (snapshot.phase === 'camera-check') return '摄像头自检 1/3'
+  if (snapshot.phase === 'model-check' || snapshot.phase === 'model-error') return '识别组件自检 2/3'
+  if (snapshot.phase === 'body-check' || snapshot.phase === 'baseline') return '人体识别 2/3'
+  if (snapshot.phase === 'complete') return '动作校准 5/5'
+  return `动作校准 ${Math.min(5, snapshot.stepIndex + 1)}/5`
+}
+
+function actionButton(label: string, action: string, handler: () => void): HTMLButtonElement {
+  const button = element('button', 'calibration-action', label)
+  button.type = 'button'
+  button.dataset.action = action
+  button.addEventListener('click', handler)
+  return button
 }
 
 function element<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] {
