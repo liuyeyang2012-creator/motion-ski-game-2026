@@ -171,6 +171,7 @@ it('deploys the verified dist directory through the official Pages actions', () 
   expect(workflow).toContain('actions/checkout@v6')
   expect(workflow).toContain('actions/setup-node@v6')
   expect(workflow).toContain('npm run build:pages')
+  expect(workflow).toContain('actions/configure-pages@v6')
   expect(workflow).toContain('actions/upload-pages-artifact@v4')
   expect(workflow).toContain('path: dist')
   expect(workflow).toContain('actions/deploy-pages@v4')
@@ -222,7 +223,7 @@ jobs:
       - run: npm test -- --run
       - run: npm run typecheck
       - run: npm run build:pages
-      - uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v4
         with:
           path: dist
