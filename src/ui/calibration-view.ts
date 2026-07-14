@@ -3,6 +3,11 @@ import type { CalibrationAction, CalibrationFeedbackCode } from '../motion/calib
 import { renderPoseOverlay } from './pose-overlay'
 
 const actionInstructions: Record<CalibrationAction, string> = {
+  'face-neutral': '正脸',
+  'turn-left': '向左转头',
+  'turn-right': '向右转头',
+  'look-up': '抬头',
+  'look-down': '低头',
   'lean-left': '向左侧身',
   'lean-right': '向右侧身',
   duck: '轻轻低头',
@@ -15,6 +20,14 @@ const feedbackCopy: Record<CalibrationFeedbackCode, string> = {
   'body-not-found': '请站到高亮框内',
   'head-missing': '请调整手机，让头部进入画面',
   'shoulders-missing': '请把双肩放入高亮框',
+  'move-closer': '请靠近手机一些',
+  'move-back': '请离手机远一些',
+  'center-head': '请将头部移到引导框中央',
+  'shoulders-moving': '请只转头，双肩保持不动',
+  'turn-left-more': '请再向左转一点',
+  'turn-right-more': '请再向右转一点',
+  'look-up-more': '请再抬头一点',
+  'look-down-more': '请再低头一点',
   'left-hand-missing': '请让左手进入画面',
   'right-hand-missing': '请让右手进入画面',
   'hips-missing': '请调整手机，让髋部进入画面',

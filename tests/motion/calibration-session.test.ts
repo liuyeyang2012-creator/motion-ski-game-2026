@@ -67,11 +67,11 @@ describe('CalibrationSession', () => {
 
   it('keeps completed steps after background suspension and requires the current step afresh', () => {
     const session = sessionWithFirstStepCompleted()
-    session.update(rightLean(2000))
-    session.update(rightLean(6000))
+    session.update(turnLeft(2000))
+    session.update(turnLeft(6000))
     expect(session.snapshot()).toMatchObject({ phase: 'action', stepIndex: 1, completedSteps: 1 })
 
-    for (let time = 6080; time <= 6400; time += 80) session.update(rightLean(time))
+    for (let time = 6080; time <= 6400; time += 80) session.update(turnLeft(time))
     expect(session.snapshot()).toMatchObject({ phase: 'step-success', stepIndex: 1, completedSteps: 2 })
   })
 
@@ -141,6 +141,14 @@ function leftLean(time: number) {
 
 function rightLean(time: number) {
   return poseSample(time, { changes: { 11: { x: 0.5 }, 12: { x: 0.7 } } })
+}
+
+function turnLeft(time: number) {
+  return poseSample(time, {
+    changes: Object.fromEntries([0, 2, 5, 7, 8].map(index => [index, {
+      x: poseSample(0).landmarks[index].x + 0.04,
+    }])),
+  })
 }
 
 function sessionWithFirstStepCompleted(): CalibrationSession {

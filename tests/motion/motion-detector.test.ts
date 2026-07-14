@@ -10,6 +10,13 @@ import { MotionDetector } from '../../src/motion/motion-detector'
 import type { CalibrationProfile } from '../../src/motion/calibration'
 import { poseSample } from '../support/pose-sample'
 
+const moveFace = (capturedAt: number, dx: number, dy = 0) => poseSample(capturedAt, {
+  changes: Object.fromEntries([0, 2, 5, 7, 8].map(index => [index, {
+    x: poseSample(0).landmarks[index].x + dx,
+    y: poseSample(0).landmarks[index].y + dy,
+  }])),
+})
+
 describe('motion calibration and detection', () => {
   it('reports missing hips instead of producing a full-body baseline', () => {
     const result = buildCalibration([poseSample(0, { changes: { 23: { visibility: 0.2 }, 24: { visibility: 0.2 } } })], 'standing')
@@ -203,23 +210,24 @@ describe('motion calibration and detection', () => {
 
   it('keeps each prompted action visible long enough to follow', () => {
     expect(CALIBRATION_SAMPLES_PER_STEP).toBeGreaterThanOrEqual(20)
-    expect(getCalibrationPrompt(25, 'seated')).toContain('第 1/5 步')
+    expect(getCalibrationPrompt(25, 'seated')).toBe('第 1/5 步 · 保持头部居中')
     expect(getCalibrationPrompt(49, 'seated')).toContain('第 1/5 步')
-    expect(getCalibrationPrompt(50, 'seated')).toContain('第 2/5 步')
+    expect(getCalibrationPrompt(50, 'seated')).toBe('第 2/5 步 · 向左转头')
+    expect(getCalibrationPrompt(75, 'seated')).toBe('第 3/5 步 · 向右转头')
+    expect(getCalibrationPrompt(100, 'seated')).toBe('第 4/5 步 · 抬头')
+    expect(getCalibrationPrompt(125, 'seated')).toBe('第 5/5 步 · 低头')
   })
 
   it('tolerates a briefly lost pose when all prompted actions are completed', () => {
     const samples = Array.from({ length: CALIBRATION_TOTAL_SAMPLES }, (_, index) => poseSample(index * 80))
     const step = CALIBRATION_SAMPLES_PER_STEP
-    for (let index = step; index < step * 2; index += 1) {
-      samples[index] = poseSample(index * 80, { changes: { 11: { x: 0.32 }, 12: { x: 0.52 }, 23: { x: 0.35 }, 24: { x: 0.49 } } })
-    }
+    for (let index = step; index < step * 2; index += 1) samples[index] = poseSample(index * 80)
     for (let index = step * 2; index < step * 3; index += 1) {
-      samples[index] = poseSample(index * 80, { changes: { 11: { x: 0.48 }, 12: { x: 0.68 }, 23: { x: 0.51 }, 24: { x: 0.65 } } })
+      samples[index] = moveFace(index * 80, 0.04)
     }
-    for (let index = step * 3; index < step * 4; index += 1) samples[index] = poseSample(index * 80, { changes: { 0: { y: 0.28 } } })
-    for (let index = step * 4; index < step * 5; index += 1) samples[index] = poseSample(index * 80, { changes: { 15: { y: 0.3 }, 16: { y: 0.3 } } })
-    for (let index = step * 5; index < step * 6; index += 1) samples[index] = poseSample(index * 80, { changes: { 15: { x: 0.1 }, 16: { x: 0.9 } } })
+    for (let index = step * 3; index < step * 4; index += 1) samples[index] = moveFace(index * 80, -0.04)
+    for (let index = step * 4; index < step * 5; index += 1) samples[index] = moveFace(index * 80, 0, -0.03)
+    for (let index = step * 5; index < step * 6; index += 1) samples[index] = moveFace(index * 80, 0, 0.03)
     samples[step * 3 + 2] = { capturedAt: (step * 3 + 2) * 80, landmarks: [] }
 
     const calibration = buildCalibration(samples.slice(0, step), 'seated')

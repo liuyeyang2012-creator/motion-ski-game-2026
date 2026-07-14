@@ -77,6 +77,33 @@ describe('calibration view', () => {
     expect(root.textContent).toContain('短暂识别不稳不会清零')
   })
 
+  it.each([
+    ['face-neutral', '正脸'],
+    ['turn-left', '向左转头'],
+    ['turn-right', '向右转头'],
+    ['look-up', '抬头'],
+    ['look-down', '低头'],
+  ] as const)('renders the %s instruction', (action, instruction) => {
+    expect(getCalibrationInstruction(snapshot({ action, completedActions: [] }))).toBe(instruction)
+  })
+
+  it.each([
+    ['move-closer', '请靠近手机一些'],
+    ['move-back', '请离手机远一些'],
+    ['center-head', '请将头部移到引导框中央'],
+    ['shoulders-moving', '请只转头，双肩保持不动'],
+    ['turn-left-more', '请再向左转一点'],
+    ['turn-right-more', '请再向右转一点'],
+    ['look-up-more', '请再抬头一点'],
+    ['look-down-more', '请再低头一点'],
+  ] as const)('renders the %s correction', (feedback, correction) => {
+    const root = document.createElement('section')
+
+    renderCalibration(root, snapshot({ action: 'turn-left', feedback, completedActions: [] }))
+
+    expect(root.querySelector('.calibration-feedback')?.textContent).toBe(correction)
+  })
+
   it('reflects hold progress in the progress fill custom property', () => {
     const root = document.createElement('section')
 

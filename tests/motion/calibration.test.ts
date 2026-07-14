@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { assessCalibrationAction, buildCalibration, checkFraming, getCalibrationActions, matchesCalibrationAction } from '../../src/motion/calibration'
 import { poseSample } from '../support/pose-sample'
 
+const moveFace = (capturedAt: number, dx: number, dy = 0) => poseSample(capturedAt, {
+  changes: Object.fromEntries([0, 2, 5, 7, 8].map(index => [index, {
+    x: poseSample(0).landmarks[index].x + dx,
+    y: poseSample(0).landmarks[index].y + dy,
+  }])),
+})
+
 describe('mode-specific calibration', () => {
   it('ignores hidden legs and hands in the seated baseline', () => {
     const samples = [0, 80, 160, 240, 320].map(time => poseSample(time, {
@@ -22,13 +29,13 @@ describe('mode-specific calibration', () => {
   })
 
   it('asks for only the missing hand during hands-up', () => {
-    const calibration = buildCalibration([poseSample(0)], 'seated')
+    const calibration = buildCalibration([poseSample(0)], 'standing')
     if (!calibration.ok) throw new Error('calibration failed')
 
     expect(assessCalibrationAction(
       calibration.profile,
       poseSample(80, { hidden: [15] }),
-      'seated',
+      'standing',
       'hands-up',
     )).toMatchObject({
       ok: false,
@@ -48,8 +55,10 @@ describe('mode-specific calibration', () => {
     expect(checkFraming(sample, 'standing')).toEqual({ ok: false, issue: 'lower-body-not-visible' })
   })
 
-  it('uses reach for half-body and squat for full-body step five', () => {
-    expect(getCalibrationActions('seated')).toEqual(['lean-left', 'lean-right', 'duck', 'hands-up', 'reach'])
+  it('uses head actions for half-body and preserves full-body actions', () => {
+    expect(getCalibrationActions('seated')).toEqual([
+      'face-neutral', 'turn-left', 'turn-right', 'look-up', 'look-down',
+    ])
     expect(getCalibrationActions('standing')).toEqual(['lean-left', 'lean-right', 'duck', 'hands-up', 'squat'])
   })
 
@@ -59,7 +68,8 @@ describe('mode-specific calibration', () => {
     if (!seated.ok || !standing.ok) throw new Error('calibration failed')
 
     expect(seated.profile).toMatchObject({ torsoCenterX: 0.4, hipY: null, kneeY: null })
-    expect(standing.profile).toMatchObject({ torsoCenterX: 0.5, hipY: 0.7, kneeY: 0.9 })
+    expect(seated.profile.headControl).toBeTruthy()
+    expect(standing.profile).toMatchObject({ torsoCenterX: 0.5, hipY: 0.7, kneeY: 0.9, headControl: null })
   })
 
   it('matches each prompted action using mode-specific landmarks', () => {
@@ -67,48 +77,21 @@ describe('mode-specific calibration', () => {
     const standing = buildCalibration([poseSample(0)], 'standing')
     if (!seated.ok || !standing.ok) throw new Error('calibration failed')
 
-    expect(matchesCalibrationAction(seated.profile, poseSample(1, { changes: { 11: { x: 0.34 }, 12: { x: 0.54 } } }), 'seated', 'lean-left')).toBe(true)
-    expect(matchesCalibrationAction(seated.profile, poseSample(1, { changes: { 15: { x: 0.1 } } }), 'seated', 'reach')).toBe(false)
-    expect(matchesCalibrationAction(seated.profile, poseSample(1, { changes: { 15: { x: 0.1 }, 16: { x: 0.9 } } }), 'seated', 'reach')).toBe(true)
+    expect(matchesCalibrationAction(seated.profile, moveFace(1, 0.04), 'seated', 'turn-left')).toBe(true)
+    expect(matchesCalibrationAction(seated.profile, moveFace(2, 0, -0.03), 'seated', 'look-up')).toBe(true)
     expect(matchesCalibrationAction(standing.profile, poseSample(1, { changes: { 23: { y: 0.76 }, 24: { y: 0.76 } } }), 'standing', 'squat')).toBe(true)
   })
 
-  it.each([0.35, 0.4, 0.5])('accepts realistic bilateral reach at shoulder width %s', shoulderWidth => {
-    const leftShoulderX = 0.5 - shoulderWidth / 2
-    const rightShoulderX = 0.5 + shoulderWidth / 2
-    const calibration = buildCalibration([poseSample(0, {
-      changes: { 11: { x: leftShoulderX }, 12: { x: rightShoulderX } },
-    })], 'seated')
-    if (!calibration.ok) throw new Error('calibration failed')
-
-    expect(matchesCalibrationAction(calibration.profile, poseSample(1, {
-      changes: {
-        11: { x: leftShoulderX },
-        12: { x: rightShoulderX },
-        15: { x: 0.5 - shoulderWidth * 0.8 },
-        16: { x: 0.5 + shoulderWidth * 0.8 },
-      },
-    }), 'seated', 'reach')).toBe(true)
-  })
-
-  it('rejects one-arm reach and bilateral reach with insufficient span', () => {
-    const calibration = buildCalibration([poseSample(0, {
-      changes: { 11: { x: 0.3 }, 12: { x: 0.7 } },
-    })], 'seated')
-    if (!calibration.ok) throw new Error('calibration failed')
-
-    expect(matchesCalibrationAction(calibration.profile, poseSample(1, {
-      changes: { 11: { x: 0.3 }, 12: { x: 0.7 }, 15: { x: 0.18 }, 16: { x: 0.7 } },
-    }), 'seated', 'reach')).toBe(false)
-    expect(matchesCalibrationAction(calibration.profile, poseSample(2, {
-      changes: { 11: { x: 0.3 }, 12: { x: 0.7 }, 15: { x: 0.28 }, 16: { x: 0.72 } },
-    }), 'seated', 'reach')).toBe(false)
-  })
-
-  it('does not match an action when its required landmark is unavailable', () => {
+  it('does not match a head action when its required face support is unavailable', () => {
     const calibration = buildCalibration([poseSample(0)], 'seated')
     if (!calibration.ok) throw new Error('calibration failed')
 
-    expect(matchesCalibrationAction(calibration.profile, poseSample(1, { hidden: [15], changes: { 15: { x: 0.1 } } }), 'seated', 'reach')).toBe(false)
+    expect(matchesCalibrationAction(calibration.profile, moveFace(1, 0.04, 0), 'seated', 'turn-left')).toBe(true)
+    expect(matchesCalibrationAction(
+      calibration.profile,
+      poseSample(1, { hidden: [7, 8], changes: { 0: { x: 0.54 }, 2: { x: 0.51 }, 5: { x: 0.57 } } }),
+      'seated',
+      'turn-left',
+    )).toBe(false)
   })
 })

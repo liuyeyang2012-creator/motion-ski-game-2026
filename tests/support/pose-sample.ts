@@ -3,6 +3,10 @@ import type { PoseSample } from '../../src/pose/types'
 export function poseSample(capturedAt: number, options: { hidden?: number[]; changes?: Record<number, Partial<{ x: number; y: number; visibility: number }>> } = {}): PoseSample {
   const landmarks = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, z: 0, visibility: 1 }))
   Object.assign(landmarks[0], { x: 0.5, y: 0.2 })
+  Object.assign(landmarks[2], { x: 0.47, y: 0.18 })
+  Object.assign(landmarks[5], { x: 0.53, y: 0.18 })
+  Object.assign(landmarks[7], { x: 0.43, y: 0.21 })
+  Object.assign(landmarks[8], { x: 0.57, y: 0.21 })
   Object.assign(landmarks[11], { x: 0.4, y: 0.4 })
   Object.assign(landmarks[12], { x: 0.6, y: 0.4 })
   Object.assign(landmarks[15], { x: 0.4, y: 0.65 })

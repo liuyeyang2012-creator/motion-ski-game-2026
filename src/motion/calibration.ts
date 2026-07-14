@@ -1,8 +1,18 @@
 import type { PlayStyle } from '../app/types'
 import { assessLandmarks, landmarkIsUsable } from '../pose/pose-quality'
 import type { PoseSample } from '../pose/types'
+import {
+  assessHeadAction,
+  assessHeadFraming,
+  buildHeadControlProfile,
+  HEAD_REQUIRED_INDICES,
+  recordHeadThreshold,
+} from './head-control'
+import type { HeadCalibrationAction, HeadControlProfile, HeadFeedbackCode, HeadMotionAction } from './head-control'
 
-export type CalibrationAction = 'lean-left' | 'lean-right' | 'duck' | 'hands-up' | 'reach' | 'squat'
+export type CalibrationAction =
+  | HeadCalibrationAction
+  | 'lean-left' | 'lean-right' | 'duck' | 'hands-up' | 'reach' | 'squat'
 export type FramingIssue = 'pose-lost' | 'head-not-visible' | 'shoulders-not-visible' | 'hands-not-visible' | 'lower-body-not-visible'
 export type FramingResult = { ok: true } | { ok: false; issue: FramingIssue }
 
@@ -13,15 +23,17 @@ export interface CalibrationProfile {
   wristY: number
   hipY: number | null
   kneeY: number | null
+  headControl?: HeadControlProfile | null
 }
 
 export type CalibrationIssue = 'not-enough-samples' | 'shoulders-not-visible' | 'hips-not-visible' | 'head-not-visible'
 export type CalibrationResult = { ok: true; profile: CalibrationProfile } | { ok: false; issue: CalibrationIssue }
-export type ActionCalibrationIssue = 'pose-lost' | 'lean-left-missing' | 'lean-right-missing' | 'duck-missing' | 'hands-up-missing' | 'squat-missing' | 'reach-missing'
-export type CalibrationFeedbackCode =
+export type ActionCalibrationIssue =
+  | 'pose-lost' | 'face-neutral-missing' | 'turn-left-missing' | 'turn-right-missing'
+  | 'look-up-missing' | 'look-down-missing' | 'lean-left-missing' | 'lean-right-missing'
+  | 'duck-missing' | 'hands-up-missing' | 'squat-missing' | 'reach-missing'
+export type CalibrationFeedbackCode = HeadFeedbackCode
   | 'body-not-found'
-  | 'head-missing'
-  | 'shoulders-missing'
   | 'left-hand-missing'
   | 'right-hand-missing'
   | 'hips-missing'
@@ -33,7 +45,6 @@ export type CalibrationFeedbackCode =
   | 'raise-right-hand'
   | 'spread-hands'
   | 'lower-hips'
-  | 'hold'
 
 export interface CalibrationAssessment {
   ok: boolean
@@ -45,12 +56,20 @@ export interface CalibrationAssessment {
 export const CALIBRATION_SAMPLES_PER_STEP = 25
 export const CALIBRATION_TOTAL_SAMPLES = CALIBRATION_SAMPLES_PER_STEP * 6
 
+const HEAD_CALIBRATION_ACTIONS = [
+  'face-neutral', 'turn-left', 'turn-right', 'look-up', 'look-down',
+] as const satisfies readonly HeadCalibrationAction[]
+
+const isHeadCalibrationAction = (action: CalibrationAction): action is HeadCalibrationAction => (
+  (HEAD_CALIBRATION_ACTIONS as readonly CalibrationAction[]).includes(action)
+)
+
 export const getCalibrationActions = (style: PlayStyle): readonly CalibrationAction[] => style === 'seated'
-  ? ['lean-left', 'lean-right', 'duck', 'hands-up', 'reach']
+  ? HEAD_CALIBRATION_ACTIONS
   : ['lean-left', 'lean-right', 'duck', 'hands-up', 'squat']
 
 const calibrationPrompts = {
-  seated: ['向左侧身', '向右侧身', '轻轻低头', '抬起双手', '向两侧伸展手臂'],
+  seated: ['保持头部居中', '向左转头', '向右转头', '抬头', '低头'],
   standing: ['向左侧身', '向右侧身', '轻轻低头', '抬起双手', '缓慢下蹲'],
 } as const
 
@@ -68,6 +87,7 @@ const median = (values: number[]): number => {
 const isVisible = (sample: PoseSample, index: number) => landmarkIsUsable(sample, index)
 
 export function requiredLandmarksFor(style: PlayStyle, action: CalibrationAction | null): readonly number[] {
+  if (style === 'seated' && action !== null && isHeadCalibrationAction(action)) return HEAD_REQUIRED_INDICES
   if (action === 'duck') return [0, 11, 12]
   if (action === 'hands-up' || action === 'reach') return [11, 12, 15, 16]
   if (action === 'squat') return [23, 24, 25, 26]
@@ -100,6 +120,8 @@ export function buildCalibration(samples: PoseSample[], style: PlayStyle): Calib
   if (usableSamples.length < minimumUsable) return { ok: false, issue: 'not-enough-samples' }
 
   const standing = style === 'standing'
+  const headControlResult = standing ? null : buildHeadControlProfile(usableSamples)
+  if (headControlResult && !headControlResult.ok) return { ok: false, issue: 'head-not-visible' }
   const shoulderWidths = usableSamples.map(sample => Math.abs(sample.landmarks[12].x - sample.landmarks[11].x))
   return {
     ok: true,
@@ -119,6 +141,7 @@ export function buildCalibration(samples: PoseSample[], style: PlayStyle): Calib
           .filter(sample => isVisible(sample, 25) && isVisible(sample, 26))
           .map(sample => (sample.landmarks[25].y + sample.landmarks[26].y) / 2))
         : null,
+      headControl: standing ? null : headControlResult!.profile,
     },
   }
 }
@@ -130,6 +153,20 @@ export function assessCalibrationAction(
   action: CalibrationAction,
 ): CalibrationAssessment {
   const requiredIndices = requiredLandmarksFor(style, action)
+  if (style === 'seated') {
+    if (!isHeadCalibrationAction(action) || !profile.headControl) {
+      return { ok: false, feedback: 'body-not-found', requiredIndices, confidence: 0 }
+    }
+    const assessment = action === 'face-neutral'
+      ? assessHeadFraming(sample)
+      : assessHeadAction(profile.headControl, sample, action)
+    return {
+      ok: assessment.ok,
+      feedback: assessment.feedback,
+      requiredIndices,
+      confidence: assessment.confidence,
+    }
+  }
   if (sample.landmarks.length === 0 || !getCalibrationActions(style).includes(action)) {
     return { ok: false, feedback: 'body-not-found', requiredIndices, confidence: 0 }
   }
@@ -195,7 +232,37 @@ export function validateCalibrationActions(profile: CalibrationProfile, samples:
     .slice(CALIBRATION_SAMPLES_PER_STEP * (actionIndex + 1), CALIBRATION_SAMPLES_PER_STEP * (actionIndex + 2))
     .filter(usable)
   const actions = getCalibrationActions(style)
+  if (style === 'seated') {
+    let headControl = profile.headControl
+    if (!headControl) return { ok: false, issue: 'face-neutral-missing' }
+    const issues: Record<HeadCalibrationAction, ActionCalibrationIssue> = {
+      'face-neutral': 'face-neutral-missing',
+      'turn-left': 'turn-left-missing',
+      'turn-right': 'turn-right-missing',
+      'look-up': 'look-up-missing',
+      'look-down': 'look-down-missing',
+    }
+    for (const [index, action] of HEAD_CALIBRATION_ACTIONS.entries()) {
+      if (action === 'face-neutral') {
+        if (!actionSamples(index).some(sample => assessHeadFraming(sample).ok)) {
+          return { ok: false, issue: issues[action] }
+        }
+        continue
+      }
+      const evidence = actionSamples(index)
+        .map(sample => assessHeadAction(headControl!, sample, action as HeadMotionAction))
+        .find(assessment => assessment.ok)
+      if (!evidence) return { ok: false, issue: issues[action] }
+      headControl = recordHeadThreshold(headControl, action, evidence.strength)
+    }
+    return { ok: true }
+  }
   const issues: Record<CalibrationAction, ActionCalibrationIssue> = {
+    'face-neutral': 'face-neutral-missing',
+    'turn-left': 'turn-left-missing',
+    'turn-right': 'turn-right-missing',
+    'look-up': 'look-up-missing',
+    'look-down': 'look-down-missing',
     'lean-left': 'lean-left-missing',
     'lean-right': 'lean-right-missing',
     duck: 'duck-missing',
