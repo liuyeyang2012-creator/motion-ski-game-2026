@@ -89,6 +89,28 @@ describe('calibration view', () => {
     expect(root.textContent).toContain('请将头部和双肩置于引导框内，保持正对手机。')
   })
 
+  it.each([
+    ['move-closer', '请靠近手机一些'],
+    ['move-back', '请离手机远一些'],
+    ['center-head', '请将头部移到引导框中央'],
+    ['head-missing', '请调整手机，让头部进入画面'],
+    ['shoulders-missing', '请把双肩放入高亮框'],
+  ] as const)('shows the %s correction during seated neutral baseline', (feedback, correction) => {
+    const root = document.createElement('section')
+
+    renderCalibration(root, snapshot({
+      style: 'seated',
+      phase: 'baseline',
+      action: 'face-neutral',
+      stepIndex: 0,
+      feedback,
+    }), actions)
+
+    expect(root.querySelector('.calibration-instruction')?.textContent).toBe('请正对手机')
+    expect(root.querySelectorAll('.calibration-feedback')).toHaveLength(1)
+    expect(root.querySelector('.calibration-feedback')?.textContent).toBe(correction)
+  })
+
   it('renders the current half-body action', () => {
     const root = document.createElement('section')
 

@@ -116,7 +116,8 @@ export function renderCalibration(
     status.append(recognition)
   }
 
-  if (snapshot.feedback && snapshot.phase === 'action') {
+  if (snapshot.feedback && (snapshot.phase === 'action'
+    || (snapshot.style === 'seated' && snapshot.phase === 'baseline'))) {
     status.append(element('p', 'calibration-feedback', feedbackCopy[snapshot.feedback]))
   }
 
