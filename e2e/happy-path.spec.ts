@@ -32,6 +32,6 @@ test('recommended sensitivity escapes a stuck action', async ({ page }) => {
 
   await page.getByRole('button', { name: '使用推荐灵敏度' }).click()
 
-  await expect(page.getByText(/动作校准 1\/5/)).toBeVisible()
+  await expect(page.getByText(/动作校准 2\/5/)).toBeVisible()
   await expect(page.getByText('校准成功')).toBeVisible()
 })

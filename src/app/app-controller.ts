@@ -73,6 +73,10 @@ function createSeatedFixtureSamples(): PoseSample[] {
   ): PoseSample => {
     const landmarks = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, z: 0, visibility: 1 }))
     Object.assign(landmarks[0], { x: 0.5, y: 0.2 })
+    Object.assign(landmarks[2], { x: 0.47, y: 0.18 })
+    Object.assign(landmarks[5], { x: 0.53, y: 0.18 })
+    Object.assign(landmarks[7], { x: 0.43, y: 0.21 })
+    Object.assign(landmarks[8], { x: 0.57, y: 0.21 })
     Object.assign(landmarks[11], { x: 0.4, y: 0.4 })
     Object.assign(landmarks[12], { x: 0.6, y: 0.4 })
     Object.assign(landmarks[15], { x: 0.4, y: 0.65 })
@@ -85,31 +89,51 @@ function createSeatedFixtureSamples(): PoseSample[] {
     for (const [index, change] of Object.entries(changes)) Object.assign(landmarks[Number(index)], change)
     return { capturedAt, landmarks }
   }
-  const action = (start: number, changes: Record<number, Partial<{ x: number; y: number }>>) => [
+  const action = (
+    start: number,
+    nextStepAt: number,
+    changes: Record<number, Partial<{ x: number; y: number }>>,
+  ) => [
     sample(start, changes),
     sample(start + 80, changes),
     { capturedAt: start + 160, landmarks: [] },
     ...Array.from({ length: 5 }, (_, index) => sample(start + 240 + index * 80, changes)),
-    sample(start + 1050),
+    sample(nextStepAt),
   ]
+  const moveFace = (dx: number, dy = 0) => Object.fromEntries([0, 2, 5, 7, 8].map(index => [index, {
+    x: sample(0).landmarks[index].x + dx,
+    y: sample(0).landmarks[index].y + dy,
+  }]))
 
   return [
-    ...Array.from({ length: 11 }, (_, index) => sample(
+    ...Array.from({ length: 13 }, (_, index) => sample(
       index * 80,
       {},
       [15, 16, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32],
     )),
-    ...action(1000, { 11: { x: 0.3 }, 12: { x: 0.5 } }),
-    ...action(2300, { 11: { x: 0.5 }, 12: { x: 0.7 } }),
-    ...action(3600, { 0: { y: 0.3 } }),
-    ...action(4900, { 15: { y: 0.3 }, 16: { y: 0.3 } }),
-    ...action(6200, { 15: { x: 0.1 }, 16: { x: 0.9 } }),
+    sample(1_600),
+    ...action(1_680, 2_880, moveFace(0.04)),
+    ...action(2_960, 4_160, moveFace(-0.04)),
+    ...action(4_240, 5_440, moveFace(0, -0.03)),
+    ...action(5_520, 6_720, moveFace(0, 0.03)),
   ]
 }
 
 function createStuckFixtureSamples(): PoseSample[] {
-  const baseline = createSeatedFixtureSamples().slice(0, 11)
-  return [...baseline, { ...baseline[baseline.length - 1], capturedAt: 9_000 }]
+  const readyForTurn = createSeatedFixtureSamples().slice(0, 14)
+  const neutral = readyForTurn[readyForTurn.length - 1]
+  const faceIndices = new Set([0, 2, 5, 7, 8])
+  const subthresholdTurn: PoseSample = {
+    capturedAt: 1_680,
+    landmarks: neutral.landmarks.map((landmark, index) => faceIndices.has(index)
+      ? { ...landmark, x: landmark.x + 0.014 }
+      : { ...landmark }),
+  }
+  const stalled: PoseSample = {
+    capturedAt: 7_600,
+    landmarks: neutral.landmarks.map(landmark => ({ ...landmark })),
+  }
+  return [...readyForTurn, subthresholdTurn, stalled]
 }
 
 export class AppController {
@@ -263,6 +287,17 @@ export class AppController {
   }
 
   private async captureLoop(time: number, video: HTMLVideoElement): Promise<void> {
+    if (this.calibrating && !this.detector && this.calibrationSession) {
+      const session = this.calibrationSession
+      const previous = session.snapshot()
+      const next = session.tick(time)
+      if (previous.phase !== next.phase
+        || previous.action !== next.action
+        || previous.canRecover !== next.canRecover) {
+        this.renderCalibrationSession(session)
+      }
+      this.finishCalibrationIfComplete(next)
+    }
     if (shouldCapturePose(this.calibrating && !this.detector, this.game?.status)) {
       if (time - this.lastInference >= 80 && video.readyState >= 2) {
         this.lastInference = time
@@ -274,6 +309,7 @@ export class AppController {
 
   private onPose(sample: PoseSample): void {
     if (this.calibrating) {
+      if (this.detector) return
       const session = this.calibrationSession
       if (!session) return
       const previous = session.snapshot()
@@ -282,12 +318,7 @@ export class AppController {
       if (shouldVibrate(previous, next)) {
         try { navigator.vibrate?.(35) } catch { /* Haptics are optional. */ }
       }
-      if (next.phase === 'complete' && next.profile && !this.detector) {
-        saveCalibrationProfile(this.storage, this.choice.playStyle, next.profile)
-        this.detector = new MotionDetector(next.profile, this.choice.playStyle)
-        renderMessage(this.root, '校准完成', '3 · 2 · 1，准备出发！')
-        this.countdownTimer = window.setTimeout(() => this.startGame(), 900)
-      }
+      this.finishCalibrationIfComplete(next)
       return
     }
     if (!this.detector || this.game?.status !== 'playing') return
@@ -324,6 +355,14 @@ export class AppController {
   private renderCalibrationSession(session: CalibrationSession): void {
     if (!this.isCurrentCalibration(session)) return
     renderCalibration(this.root, session.snapshot(), this.calibrationViewActions(session))
+  }
+
+  private finishCalibrationIfComplete(snapshot: CalibrationSnapshot): void {
+    if (snapshot.phase !== 'complete' || !snapshot.profile || this.detector) return
+    saveCalibrationProfile(this.storage, this.choice.playStyle, snapshot.profile)
+    this.detector = new MotionDetector(snapshot.profile, this.choice.playStyle)
+    renderMessage(this.root, '校准完成', '3 · 2 · 1，准备出发！')
+    this.countdownTimer = window.setTimeout(() => this.startGame(), 900)
   }
 
   private clearCalibrationState(): void {

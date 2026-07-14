@@ -8,18 +8,21 @@ import {
   getCalibrationActions,
   requiredLandmarksFor,
 } from './calibration'
+import { assessHeadAction, assessHeadFraming, recordHeadThreshold } from './head-control'
 import type {
   CalibrationAction,
   CalibrationFeedbackCode,
   CalibrationProfile,
   FramingIssue,
 } from './calibration'
+import type { HeadAssessment, HeadMotionAction } from './head-control'
 
 const REQUIRED_EVIDENCE_MS = 500
+const NEUTRAL_REQUIRED_EVIDENCE_MS = 1_000
 const MAX_SAMPLE_DELTA_MS = 120
 const MISS_DECAY_RATE = 0.35
-const ACTION_RECOVERY_MS = 8_000
-const SUCCESS_DISPLAY_MS = 450
+const ACTION_RECOVERY_MS = 6_000
+const SUCCESS_DISPLAY_MS = 600
 const MINIMUM_BASELINE_SAMPLES = 8
 const MINIMUM_BASELINE_SPAN_MS = 800
 
@@ -49,6 +52,8 @@ export interface CalibrationSnapshot {
   feedback: CalibrationFeedbackCode | null
   requiredIndices: readonly number[]
   latestLandmarks: PoseLandmark[]
+  headRecognized: boolean
+  shouldersRecognized: boolean
   canRecover: boolean
   profile: CalibrationProfile | null
 }
@@ -70,6 +75,8 @@ export class CalibrationSession {
   private latestLandmarks: PoseLandmark[] = []
   private lastCapturedAt = 0
   private previousCapturedAt = 0
+  private observedStrength: number | null = null
+  private latestHeadAssessment: HeadAssessment | null = null
 
   constructor(style: PlayStyle) {
     this.style = style
@@ -112,15 +119,45 @@ export class CalibrationSession {
   }
 
   retryCurrentAction(): CalibrationSnapshot {
-    if (this.phase === 'action') {
+    if (this.phase === 'action' || (this.style === 'seated' && this.phase === 'baseline')) {
       this.evidenceMs = 0
+      this.observedStrength = null
+      if (this.phase === 'baseline') this.baselineSamples = []
       this.actionStartedAt = this.lastCapturedAt
     }
     return this.snapshot()
   }
 
   useRecommendedSensitivity(): CalibrationSnapshot {
-    if (this.phase === 'action' && this.profile) this.confirmCurrentStep()
+    if (this.style === 'seated' && this.phase === 'baseline') {
+      if (this.baselineSamples.length === 0) {
+        this.feedback = 'head-missing'
+        this.framingIssue = 'head-not-visible'
+        return this.snapshot()
+      }
+      const calibration = buildCalibration(this.baselineSamples, this.style)
+      if (calibration.ok) {
+        this.profile = calibration.profile
+        this.confirmCurrentStep()
+      } else {
+        this.feedback = calibration.issue === 'shoulders-not-visible' ? 'shoulders-missing' : 'head-missing'
+      }
+      return this.snapshot()
+    }
+    if (this.phase === 'action' && this.profile) {
+      if (this.style === 'standing') {
+        this.confirmCurrentStep()
+      } else {
+        const action = this.actions[this.stepIndex]
+        if (action !== 'face-neutral' && this.profile.headControl && this.observedStrength !== null) {
+          this.profile = {
+            ...this.profile,
+            headControl: recordHeadThreshold(this.profile.headControl, action as HeadMotionAction, this.observedStrength),
+          }
+          this.confirmCurrentStep()
+        }
+      }
+    }
     return this.snapshot()
   }
 
@@ -137,11 +174,32 @@ export class CalibrationSession {
     }
 
     if (this.phase === 'step-success') {
-      if (this.successAt !== null && sample.capturedAt - this.successAt >= SUCCESS_DISPLAY_MS) this.advanceAfterSuccess()
-      return this.snapshot()
+      return this.tick(sample.capturedAt)
     }
 
     if (this.phase === 'body-check') {
+      if (this.style === 'seated') {
+        const assessment = assessHeadFraming(sample)
+        this.latestHeadAssessment = assessment
+        this.feedback = assessment.feedback
+        if (!assessment.ok) {
+          this.framingIssue = sample.landmarks.length === 0
+            ? 'pose-lost'
+            : assessment.feedback === 'head-missing'
+              ? 'head-not-visible'
+              : assessment.feedback === 'shoulders-missing'
+                ? 'shoulders-not-visible'
+                : null
+          return this.snapshot()
+        }
+        this.phase = 'baseline'
+        this.baselineSamples = [sample]
+        this.evidenceMs = 0
+        this.actionStartedAt = sample.capturedAt
+        this.feedback = 'hold'
+        this.framingIssue = null
+        return this.snapshot()
+      }
       const required = requiredLandmarksFor(this.style, null)
       const quality = assessLandmarks(sample, required)
       if (!quality.ok) {
@@ -156,6 +214,28 @@ export class CalibrationSession {
     }
 
     if (this.phase === 'baseline') {
+      if (this.style === 'seated') {
+        const assessment = assessHeadFraming(sample)
+        this.latestHeadAssessment = assessment
+        this.feedback = assessment.feedback
+        this.framingIssue = sample.landmarks.length === 0
+          ? 'pose-lost'
+          : assessment.feedback === 'head-missing'
+            ? 'head-not-visible'
+            : assessment.feedback === 'shoulders-missing'
+              ? 'shoulders-not-visible'
+              : null
+        this.updateEvidence(assessment.ok, deltaMs, NEUTRAL_REQUIRED_EVIDENCE_MS)
+        if (assessment.ok) this.baselineSamples.push(sample)
+        if (this.evidenceMs >= NEUTRAL_REQUIRED_EVIDENCE_MS) {
+          const calibration = buildCalibration(this.baselineSamples, this.style)
+          if (calibration.ok) {
+            this.profile = calibration.profile
+            this.confirmCurrentStep()
+          }
+        }
+        return this.snapshot()
+      }
       const framing = checkFraming(sample, this.style)
       if (!framing.ok) {
         this.framingIssue = framing.issue
@@ -182,6 +262,25 @@ export class CalibrationSession {
 
     if (this.phase === 'action' && this.profile) {
       const action = this.actions[this.stepIndex]
+      if (this.style === 'seated' && action !== 'face-neutral' && this.profile.headControl) {
+        const assessment = assessHeadAction(this.profile.headControl, sample, action as HeadMotionAction)
+        this.latestHeadAssessment = assessment
+        this.feedback = assessment.feedback
+        this.framingIssue = sample.landmarks.length === 0 ? 'pose-lost' : null
+        if (assessment.recordable && Number.isFinite(assessment.strength)
+          && (this.observedStrength === null || Math.abs(assessment.strength) > Math.abs(this.observedStrength))) {
+          this.observedStrength = assessment.strength
+        }
+        this.updateEvidence(assessment.ok, deltaMs)
+        if (this.evidenceMs >= REQUIRED_EVIDENCE_MS && this.observedStrength !== null) {
+          this.profile = {
+            ...this.profile,
+            headControl: recordHeadThreshold(this.profile.headControl, action as HeadMotionAction, this.observedStrength),
+          }
+          this.confirmCurrentStep()
+        }
+        return this.snapshot()
+      }
       const assessment = assessCalibrationAction(this.profile, sample, this.style, action)
       this.feedback = assessment.feedback
       this.framingIssue = assessment.feedback === 'body-not-found' ? 'pose-lost' : null
@@ -191,14 +290,34 @@ export class CalibrationSession {
     return this.snapshot()
   }
 
+  tick(now: number): CalibrationSnapshot {
+    if (Number.isFinite(now)) this.lastCapturedAt = Math.max(this.lastCapturedAt, now)
+    if (this.phase === 'step-success' && this.successAt !== null
+      && this.lastCapturedAt - this.successAt >= SUCCESS_DISPLAY_MS) this.advanceAfterSuccess()
+    return this.snapshot()
+  }
+
   snapshot(): CalibrationSnapshot {
     const action = this.phase === 'action' || this.phase === 'step-success'
       ? this.actions[this.stepIndex]
-      : null
+      : this.style === 'seated' && this.phase === 'baseline'
+        ? this.actions[0]
+        : null
     const requiredIndices = requiredLandmarksFor(this.style, action)
-    const baselineProgress = this.phase === 'baseline' && this.baselineSamples.length > 0
-      ? Math.min(1, Math.max(0, (this.lastCapturedAt - this.baselineSamples[0].capturedAt) / MINIMUM_BASELINE_SPAN_MS))
+    const baselineProgress = this.phase === 'baseline'
+      ? this.style === 'seated'
+        ? this.evidenceMs / NEUTRAL_REQUIRED_EVIDENCE_MS
+        : this.baselineSamples.length > 0
+          ? Math.min(1, Math.max(0, (this.lastCapturedAt - this.baselineSamples[0].capturedAt) / MINIMUM_BASELINE_SPAN_MS))
+          : 0
       : 0
+    const latestSample = { capturedAt: this.lastCapturedAt, landmarks: this.latestLandmarks }
+    const headRecognized = this.style === 'seated'
+      ? this.latestHeadAssessment?.headRecognized ?? false
+      : assessLandmarks(latestSample, [0]).ok
+    const shouldersRecognized = this.style === 'seated'
+      ? this.latestHeadAssessment?.shouldersRecognized ?? false
+      : assessLandmarks(latestSample, [11, 12]).ok
     return {
       phase: this.phase,
       modelMode: this.modelMode,
@@ -213,16 +332,18 @@ export class CalibrationSession {
       feedback: this.feedback,
       requiredIndices,
       latestLandmarks: this.latestLandmarks,
-      canRecover: this.phase === 'action'
+      headRecognized,
+      shouldersRecognized,
+      canRecover: (this.phase === 'action' || (this.style === 'seated' && this.phase === 'baseline'))
         && this.actionStartedAt !== null
         && this.lastCapturedAt - this.actionStartedAt >= ACTION_RECOVERY_MS,
       profile: this.profile,
     }
   }
 
-  private updateEvidence(matches: boolean, deltaMs: number): void {
+  private updateEvidence(matches: boolean, deltaMs: number, requiredEvidenceMs = REQUIRED_EVIDENCE_MS): void {
     this.evidenceMs = matches
-      ? Math.min(REQUIRED_EVIDENCE_MS, this.evidenceMs + deltaMs)
+      ? Math.min(requiredEvidenceMs, this.evidenceMs + deltaMs)
       : Math.max(0, this.evidenceMs - deltaMs * MISS_DECAY_RATE)
   }
 
@@ -241,6 +362,7 @@ export class CalibrationSession {
       this.stepIndex += 1
       this.phase = 'action'
       this.actionStartedAt = this.lastCapturedAt
+      this.observedStrength = null
       this.feedback = this.actions[this.stepIndex] === 'lean-right' ? 'move-right' : null
     }
     this.successAt = null

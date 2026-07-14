@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { CalibrationPhase, CalibrationSnapshot } from '../../src/motion/calibration-session'
+import { CalibrationSession, type CalibrationPhase, type CalibrationSnapshot } from '../../src/motion/calibration-session'
 import type { LifecycleEvent } from '../../src/platform/lifecycle'
+import { poseSample } from '../support/pose-sample'
 
 const dependencies = vi.hoisted(() => ({
   camera: {
@@ -73,13 +74,15 @@ function calibrationSnapshot(phase: CalibrationPhase): CalibrationSnapshot {
     stepIndex: 0,
     totalSteps: 5,
     completedSteps: phase === 'step-success' ? 1 : 0,
-    completedActions: phase === 'step-success' ? ['lean-left'] : [],
-    action: phase === 'action' || phase === 'step-success' ? 'lean-left' : null,
+    completedActions: phase === 'step-success' ? ['turn-left'] : [],
+    action: phase === 'action' || phase === 'step-success' ? 'turn-left' : null,
     holdProgress: 0,
     framingIssue: null,
     feedback: null,
     requiredIndices: [11, 12],
     latestLandmarks: [],
+    headRecognized: false,
+    shouldersRecognized: false,
     canRecover: false,
     profile: null,
   }
@@ -95,6 +98,32 @@ function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reje
 function fakeStream(): { stream: MediaStream; stop: ReturnType<typeof vi.fn> } {
   const stop = vi.fn()
   return { stream: { getTracks: () => [{ stop }] } as unknown as MediaStream, stop }
+}
+
+function headMovement(capturedAt: number, dx = 0, dy = 0) {
+  const base = poseSample(0)
+  return poseSample(capturedAt, {
+    changes: Object.fromEntries([0, 2, 5, 7, 8].map(index => [index, {
+      x: base.landmarks[index].x + dx,
+      y: base.landmarks[index].y + dy,
+    }])),
+  })
+}
+
+function feedHeadAction(session: CalibrationSession, start: number, dx = 0, dy = 0): void {
+  for (let time = start; time <= start + 480; time += 80) session.update(headMovement(time, dx, dy))
+}
+
+function seatedSessionAtFinalSuccess(): { session: CalibrationSession; successAt: number } {
+  const session = new CalibrationSession('seated')
+  session.cameraReady(); session.modelReady()
+  for (let time = 0; time <= 960; time += 80) session.update(poseSample(time))
+  session.tick(1_600)
+  feedHeadAction(session, 1_680, 0.04); session.tick(2_800)
+  feedHeadAction(session, 2_880, -0.04); session.tick(4_000)
+  feedHeadAction(session, 4_080, 0, -0.03); session.tick(5_200)
+  feedHeadAction(session, 5_280, 0, 0.03)
+  return { session, successAt: 5_680 }
 }
 
 function startCalibration(): { controller: AppController; root: HTMLElement } {
@@ -148,6 +177,92 @@ describe('pose capture lifecycle', () => {
   it('continues inference while the game is playing after calibration', () => {
     expect(shouldCapturePose(false, 'playing')).toBe(true)
     expect(shouldCapturePose(false, 'finished')).toBe(false)
+  })
+
+  it('ticks calibration time and renders only recovery or success state changes without a pose result', async () => {
+    const root = document.createElement('section')
+    const controller = new AppController({ root, storage: localStorage })
+    const harness = controller as unknown as {
+      calibrating: boolean
+      calibrationSession: CalibrationSession | null
+      detector: null
+      captureLoop(time: number, video: HTMLVideoElement): Promise<void>
+      renderCalibrationSession(session: CalibrationSession): void
+    }
+    harness.calibrating = true
+    harness.detector = null
+    const render = vi.spyOn(harness, 'renderCalibrationSession').mockImplementation(() => {})
+    vi.spyOn(globalThis, 'requestAnimationFrame').mockReturnValue(1)
+    const video = document.createElement('video')
+
+    const neutral = new CalibrationSession('seated')
+    neutral.cameraReady(); neutral.modelReady(); neutral.update(poseSample(0))
+    harness.calibrationSession = neutral
+    const neutralTick = vi.spyOn(neutral, 'tick')
+
+    await harness.captureLoop(5_999, video)
+    expect(neutralTick).toHaveBeenLastCalledWith(5_999)
+    expect(render).not.toHaveBeenCalled()
+
+    await harness.captureLoop(6_000, video)
+    expect(neutral.snapshot().canRecover).toBe(true)
+    expect(render).toHaveBeenCalledOnce()
+
+    const success = new CalibrationSession('seated')
+    success.cameraReady(); success.modelReady()
+    for (let time = 0; time <= 960; time += 80) success.update(poseSample(time))
+    harness.calibrationSession = success
+    const successTick = vi.spyOn(success, 'tick')
+    render.mockClear()
+
+    await harness.captureLoop(1_559, video)
+    expect(successTick).toHaveBeenLastCalledWith(1_559)
+    expect(success.snapshot()).toMatchObject({ phase: 'step-success', action: 'face-neutral' })
+    expect(render).not.toHaveBeenCalled()
+
+    await harness.captureLoop(1_560, video)
+    expect(success.snapshot()).toMatchObject({ phase: 'action', action: 'turn-left' })
+    expect(render).toHaveBeenCalledOnce()
+  })
+
+  it('finishes calibration when the final success advances without another pose result', async () => {
+    vi.useFakeTimers()
+    try {
+      const root = document.createElement('section')
+      const storage = { getItem: vi.fn(() => null), setItem: vi.fn() }
+      const controller = new AppController({ root, storage })
+      const harness = controller as unknown as {
+        calibrating: boolean
+        calibrationSession: CalibrationSession | null
+        detector: unknown | null
+        captureLoop(time: number, video: HTMLVideoElement): Promise<void>
+        onPose(sample: ReturnType<typeof poseSample>): void
+      }
+      const { session, successAt } = seatedSessionAtFinalSuccess()
+      expect(session.snapshot()).toMatchObject({ phase: 'step-success', action: 'look-down' })
+      harness.calibrating = true
+      harness.calibrationSession = session
+      harness.detector = null
+      vi.spyOn(globalThis, 'requestAnimationFrame').mockReturnValue(1)
+      const video = document.createElement('video')
+
+      await harness.captureLoop(successAt + 599, video)
+      expect(harness.detector).toBeNull()
+
+      await harness.captureLoop(successAt + 600, video)
+      expect(session.snapshot().phase).toBe('complete')
+      expect(harness.detector).not.toBeNull()
+      expect(root.querySelector('.screen.message')).not.toBeNull()
+      expect(storage.setItem).toHaveBeenCalledOnce()
+
+      const detector = harness.detector
+      harness.onPose(poseSample(successAt + 601))
+      expect(harness.detector).toBe(detector)
+      expect(storage.setItem).toHaveBeenCalledOnce()
+      expect(root.querySelector('.screen.message')).not.toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
