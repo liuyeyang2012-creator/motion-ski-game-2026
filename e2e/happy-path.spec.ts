@@ -16,12 +16,15 @@ test('completes a seated quick session without external uploads', async ({ page 
   expect(unsafeRequests).toEqual([])
 })
 
-test('shows a moving skeleton and completes soft seated calibration', async ({ page }) => {
+test('shows a realistic head guide and completes soft seated calibration', async ({ page }) => {
   await page.goto('/?poseFixture=seated-soft-success')
   await page.getByRole('button', { name: '开始滑雪' }).click()
   await page.getByRole('button', { name: '开始校准' }).click()
 
-  await expect(page.locator('.pose-overlay [data-landmark="11"]')).toBeVisible()
+  await expect(page.locator('.head-calibration-guide')).toBeVisible()
+  await expect(page.locator('[data-guide-point]')).toHaveCount(5)
+  await expect(page.locator('.pose-overlay')).toHaveCount(0)
+  await expect(page.getByText('请正对手机')).toBeVisible()
   await expect(page.getByText('校准完成')).toBeVisible({ timeout: 8_000 })
 })
 

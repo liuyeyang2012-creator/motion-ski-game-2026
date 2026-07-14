@@ -1,5 +1,6 @@
 import type { CalibrationSnapshot } from '../motion/calibration-session'
 import type { CalibrationAction, CalibrationFeedbackCode } from '../motion/calibration'
+import { renderHeadCalibrationGuide } from './head-calibration-guide'
 import { renderPoseOverlay } from './pose-overlay'
 
 const actionInstructions: Record<CalibrationAction, string> = {
@@ -66,7 +67,9 @@ export function getCalibrationInstruction(snapshot: CalibrationSnapshot): string
     return snapshot.modelMode === 'compatibility' ? '兼容模式未能启动' : '普通模式未能启动'
   }
   if (snapshot.phase === 'complete') return '准备完成'
-  if (snapshot.phase === 'baseline') return '保持自然姿势'
+  if (snapshot.phase === 'baseline') {
+    return snapshot.style === 'seated' ? '请正对手机' : '保持自然姿势'
+  }
   if (snapshot.phase === 'body-check' && snapshot.feedback) return feedbackCopy[snapshot.feedback]
   if (snapshot.action) return actionInstructions[snapshot.action]
   return snapshot.style === 'standing' ? '让全身进入高亮框' : '让上半身进入高亮框'
@@ -79,14 +82,23 @@ export function renderCalibration(
 ): void {
   const successful = snapshot.phase === 'step-success'
   const screen = element('section', `calibration-screen${successful ? ' success' : ''}`)
-  if (snapshot.latestLandmarks.length > 0) {
+  if (snapshot.style === 'standing' && snapshot.latestLandmarks.length > 0) {
     screen.append(renderPoseOverlay(snapshot.latestLandmarks, snapshot.requiredIndices))
   }
   const shade = element('div', 'calibration-shade')
   shade.setAttribute('aria-hidden', 'true')
 
-  const frame = element('div', `calibration-frame ${snapshot.style === 'standing' ? 'full-body' : 'half-body'}`)
+  const frameClass = snapshot.style === 'standing'
+    ? 'calibration-frame full-body'
+    : 'calibration-frame half-body head-guide-frame'
+  const frame = element('div', frameClass)
   frame.setAttribute('aria-hidden', 'true')
+  if (snapshot.style === 'seated') {
+    frame.append(renderHeadCalibrationGuide({
+      headRecognized: snapshot.headRecognized,
+      shouldersRecognized: snapshot.shouldersRecognized,
+    }))
+  }
   if (successful) frame.append(element('span', 'calibration-check', '✓'))
 
   const status = element('div', 'calibration-status')
@@ -94,6 +106,15 @@ export function renderCalibration(
   status.setAttribute('aria-live', 'polite')
   status.append(element('p', 'calibration-stage', getStageCopy(snapshot)))
   status.append(element('h1', 'calibration-instruction', getCalibrationInstruction(snapshot)))
+
+  if (snapshot.style === 'seated' && (snapshot.phase === 'baseline' || snapshot.phase === 'action')) {
+    const recognition = element('div', 'calibration-status-chips')
+    recognition.append(
+      recognitionChip('头部', snapshot.headRecognized),
+      recognitionChip('双肩', snapshot.shouldersRecognized),
+    )
+    status.append(recognition)
+  }
 
   if (snapshot.feedback && snapshot.phase === 'action') {
     status.append(element('p', 'calibration-feedback', feedbackCopy[snapshot.feedback]))
@@ -120,13 +141,15 @@ export function renderCalibration(
   } else if (snapshot.canRecover) {
     const recovery = element('div', 'calibration-recovery')
     recovery.append(
-      actionButton('重新尝试', 'retry-action', actions.onRetryAction),
+      actionButton('重新识别', 'retry-action', actions.onRetryAction),
       actionButton('使用推荐灵敏度', 'use-recommended', actions.onUseRecommended),
     )
     status.append(recovery)
   } else {
     const help = snapshot.phase === 'model-check' && snapshot.modelMode === 'standard'
       ? '首次加载可能需要一些时间，请保持竖屏。'
+      : snapshot.style === 'seated' && snapshot.phase === 'baseline'
+        ? '请将头部和双肩置于引导框内，保持正对手机。'
       : snapshot.phase === 'action'
         ? '动作正确时进度会增加，短暂识别不稳不会清零。'
         : '请保持竖屏，并让身体处在光线充足的位置。'
@@ -135,6 +158,14 @@ export function renderCalibration(
 
   screen.append(shade, frame, status)
   root.replaceChildren(screen)
+}
+
+function recognitionChip(label: string, recognized: boolean): HTMLSpanElement {
+  return element(
+    'span',
+    `calibration-status-chip status-chip${recognized ? ' recognized' : ''}`,
+    `${label}${recognized ? '已识别' : '待识别'}`,
+  )
 }
 
 function getStageCopy(snapshot: CalibrationSnapshot): string {

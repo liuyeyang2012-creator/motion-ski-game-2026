@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { CalibrationSnapshot } from '../../src/motion/calibration-session'
 import { getCalibrationInstruction, renderCalibration } from '../../src/ui/calibration-view'
+import { poseSample } from '../support/pose-sample'
 
 const snapshot = (overrides: Partial<CalibrationSnapshot> = {}): CalibrationSnapshot => ({
   phase: 'action',
@@ -16,6 +17,8 @@ const snapshot = (overrides: Partial<CalibrationSnapshot> = {}): CalibrationSnap
   feedback: 'move-right',
   requiredIndices: [11, 12],
   latestLandmarks: [],
+  headRecognized: false,
+  shouldersRecognized: false,
   canRecover: false,
   profile: null,
   ...overrides,
@@ -60,21 +63,55 @@ describe('calibration view', () => {
 
     ;(root.querySelector('[data-action="use-recommended"]') as HTMLButtonElement).click()
 
+    expect(root.querySelector('[data-action="retry-action"]')?.textContent).toBe('重新识别')
     expect(actions.onUseRecommended).toHaveBeenCalledOnce()
+  })
+
+  it('renders seated neutral as a realistic face guide with explicit status', () => {
+    const root = document.createElement('section')
+    renderCalibration(root, snapshot({
+      style: 'seated',
+      phase: 'baseline',
+      action: 'face-neutral',
+      stepIndex: 0,
+      latestLandmarks: poseSample(0).landmarks,
+      headRecognized: true,
+      shouldersRecognized: true,
+    }), actions)
+
+    expect(root.querySelector('.calibration-frame.head-guide-frame')).not.toBeNull()
+    expect(root.querySelector('.head-calibration-guide')).not.toBeNull()
+    expect(root.querySelectorAll('[data-guide-point]')).toHaveLength(5)
+    expect(root.querySelector('.pose-overlay')).toBeNull()
+    expect(root.textContent).toContain('请正对手机')
+    expect(root.textContent).toContain('头部已识别')
+    expect(root.textContent).toContain('双肩已识别')
+    expect(root.textContent).toContain('请将头部和双肩置于引导框内，保持正对手机。')
   })
 
   it('renders the current half-body action', () => {
     const root = document.createElement('section')
 
-    renderCalibration(root, snapshot())
+    renderCalibration(root, snapshot({ action: 'turn-right', feedback: 'turn-right-more' }))
 
     expect(root.querySelector('.calibration-screen')).not.toBeNull()
     expect(root.querySelector('.calibration-shade')).not.toBeNull()
-    expect(root.querySelector('.calibration-frame.half-body')).not.toBeNull()
+    expect(root.querySelector('.calibration-frame.head-guide-frame')).not.toBeNull()
     expect(root.querySelector('.calibration-stage')?.textContent).toContain('动作校准 2/5')
-    expect(root.querySelector('h1, h2')?.textContent).toBe('向右侧身')
+    expect(root.querySelector('h1, h2')?.textContent).toBe('向右转头')
     expect(root.querySelector('.calibration-status[role="status"][aria-live="polite"]')).not.toBeNull()
     expect(root.textContent).toContain('短暂识别不稳不会清零')
+  })
+
+  it.each([
+    ['turn-left', '向左转头'],
+    ['turn-right', '向右转头'],
+    ['look-up', '抬头'],
+    ['look-down', '低头'],
+  ] as const)('renders %s seated prompt', (action, prompt) => {
+    const root = document.createElement('section')
+    renderCalibration(root, snapshot({ style: 'seated', phase: 'action', action }), actions)
+    expect(root.querySelector('.calibration-instruction')?.textContent).toBe(prompt)
   })
 
   it.each([
@@ -115,11 +152,20 @@ describe('calibration view', () => {
 
   it('renders a full-body frame with actionable lower-body guidance', () => {
     const root = document.createElement('section')
-    const value = snapshot({ style: 'standing', phase: 'body-check', action: null, framingIssue: 'lower-body-not-visible', feedback: 'hips-missing' })
+    const value = snapshot({
+      style: 'standing',
+      phase: 'body-check',
+      action: null,
+      framingIssue: 'lower-body-not-visible',
+      feedback: 'hips-missing',
+      latestLandmarks: poseSample(0).landmarks,
+    })
 
     renderCalibration(root, value)
 
     expect(root.querySelector('.calibration-frame.full-body')).not.toBeNull()
+    expect(root.querySelector('.pose-overlay')).not.toBeNull()
+    expect(root.querySelector('.head-calibration-guide')).toBeNull()
     expect(getCalibrationInstruction(value)).toBe('请调整手机，让髋部进入画面')
     expect(root.textContent).toContain(getCalibrationInstruction(value))
   })

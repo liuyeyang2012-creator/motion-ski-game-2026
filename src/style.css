@@ -109,6 +109,18 @@ h2 { font-size: 34px; }
   border-radius: 46% 46% 22% 22% / 24% 24% 14% 14%;
 }
 
+.calibration-frame.head-guide-frame {
+  top: max(6svh, 32px);
+  width: min(72vw, 45svh, 300px);
+  height: auto;
+  aspect-ratio: 5 / 6;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  animation: none;
+}
+
 .calibration-frame.full-body {
   top: max(5svh, 36px);
   width: min(52%, 220px);
@@ -119,6 +131,11 @@ h2 { font-size: 34px; }
 .calibration-screen.success .calibration-frame {
   border-color: #42f59b;
   box-shadow: 0 0 0 100vmax #020b12a6, 0 0 30px #42f59bcc, inset 0 0 18px #42f59b66;
+}
+
+.calibration-screen.success .calibration-frame.head-guide-frame {
+  border: 0;
+  box-shadow: none;
 }
 
 .calibration-check {
@@ -163,6 +180,41 @@ h2 { font-size: 34px; }
   letter-spacing: .08em;
 }
 
+.head-calibration-guide {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.head-guide-outline,
+.head-guide-point {
+  stroke: #46d8dc;
+  stroke-width: 3px;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 4px rgba(70,216,220,.28));
+}
+
+.head-guide-outline {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.head-guide-point {
+  fill: #041b29b3;
+}
+
+.head-guide-outline.recognized,
+.head-guide-point.recognized {
+  stroke: #42f59b;
+  filter: drop-shadow(0 0 4px rgba(66, 245, 155, .32));
+}
+
+.head-guide-point.recognized {
+  fill: #42f59b;
+}
+
 .pose-overlay {
   position: absolute;
   z-index: 1;
@@ -184,6 +236,29 @@ h2 { font-size: 34px; }
   font-size: clamp(25px, 8vw, 34px);
   line-height: 1.15;
   letter-spacing: -.035em;
+}
+
+.calibration-status-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.calibration-status-chip {
+  padding: 5px 9px;
+  border: 1px solid #46d8dc80;
+  border-radius: 999px;
+  color: #a7edf0;
+  background: #46d8dc14;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.calibration-status-chip.recognized {
+  border-color: #42f59b80;
+  color: #83f5b7;
+  background: #42f59b1f;
 }
 
 .calibration-feedback { margin: 8px 0 0; color: #ffd978; font-size: 14px; font-weight: 700; }
