@@ -8,12 +8,16 @@ function seeded(seed: number): () => number {
   return () => ((value = (value * 1664525 + 1013904223) >>> 0) / 0x1_0000_0000)
 }
 
+function isLaneMotion(type: MotionType): boolean {
+  return type.startsWith('lean-') || type.startsWith('turn-')
+}
+
 function makeObstacles(style: PlayStyle, kind: SessionKind, seed: number): Obstacle[] {
   const random = seeded(seed)
   const duration = SESSION_DURATION[kind] ?? 300_000
   const motions: MotionType[] = style === 'standing'
     ? ['lean-left', 'lean-right', 'duck', 'hands-up', 'squat']
-    : ['lean-left', 'lean-right', 'duck', 'hands-up']
+    : ['turn-left', 'turn-right', 'head-up', 'head-down']
   const obstacles: Obstacle[] = []
   for (let at = 3_000, id = 1; at < duration; at += 2_600, id++) {
     const warmup = at < 10_000
@@ -33,6 +37,7 @@ export function createGame(options: { playStyle: PlayStyle; sessionKind: Session
     ...options, status: 'playing', elapsedMs: 0, score: 0, combo: 0, bestCombo: 0,
     speed: GAME_CONFIG.baseSpeed, collisions: 0, severeCollisions: 0, distance: 0,
     obstacles: makeObstacles(options.playStyle, options.sessionKind, options.seed), motionCounts: {}, resolvedObstacleIds: [], playerLane: 0,
+    playerAction: 'neutral', playerActionUntil: 0,
   }
 }
 
@@ -47,13 +52,22 @@ export function advanceGame(
   const events: GameEvent[] = []
   state.elapsedMs += Math.max(0, deltaMs)
   state.distance += state.speed * (Math.max(0, deltaMs) / 1000)
+  if (state.elapsedMs >= state.playerActionUntil) state.playerAction = 'neutral'
   for (const motion of motions) {
-    if (motion.type === 'lean-left') state.playerLane = Math.max(-1, state.playerLane - 1) as -1 | 0 | 1
-    if (motion.type === 'lean-right') state.playerLane = Math.min(1, state.playerLane + 1) as -1 | 0 | 1
+    if (motion.type === 'lean-left' || motion.type === 'turn-left') state.playerLane = Math.max(-1, state.playerLane - 1) as -1 | 0 | 1
+    if (motion.type === 'lean-right' || motion.type === 'turn-right') state.playerLane = Math.min(1, state.playerLane + 1) as -1 | 0 | 1
+    if (motion.type === 'head-up') {
+      state.playerAction = 'jump'
+      state.playerActionUntil = state.elapsedMs + 600
+    }
+    if (motion.type === 'head-down') {
+      state.playerAction = 'duck'
+      state.playerActionUntil = state.elapsedMs + 650
+    }
     const target = state.obstacles.find(obstacle =>
       !state.resolvedObstacleIds.includes(obstacle.id) &&
-      (obstacle.requiredMotion.startsWith('lean-')
-        ? motion.type.startsWith('lean-') && obstacle.lane !== state.playerLane
+      (isLaneMotion(obstacle.requiredMotion)
+        ? isLaneMotion(motion.type) && obstacle.lane !== state.playerLane
         : obstacle.requiredMotion === motion.type) &&
       obstacle.appearsAt - state.elapsedMs <= obstacle.warningLeadMs &&
       obstacle.appearsAt - state.elapsedMs >= -200,
@@ -68,7 +82,7 @@ export function advanceGame(
     events.push({ type: 'motion', motion })
   }
   const due = state.obstacles.filter(obstacle => !state.resolvedObstacleIds.includes(obstacle.id) && obstacle.appearsAt <= state.elapsedMs)
-  for (const obstacle of due.filter(item => item.requiredMotion.startsWith('lean-') && item.lane !== state.playerLane)) state.resolvedObstacleIds.push(obstacle.id)
+  for (const obstacle of due.filter(item => isLaneMotion(item.requiredMotion) && item.lane !== state.playerLane)) state.resolvedObstacleIds.push(obstacle.id)
   const missed = due.filter(obstacle => !state.resolvedObstacleIds.includes(obstacle.id))
   for (const obstacle of missed) {
     state.resolvedObstacleIds.push(obstacle.id)

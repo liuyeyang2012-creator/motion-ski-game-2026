@@ -10,5 +10,7 @@ export interface GameState {
   obstacles: Obstacle[]; motionCounts: Partial<Record<MotionType, number>>
   resolvedObstacleIds: number[]
   playerLane: -1 | 0 | 1
+  playerAction: 'neutral' | 'jump' | 'duck'
+  playerActionUntil: number
 }
 export interface GameEvent { type: 'collision' | 'finished' | 'motion'; motion?: MotionEvent }
