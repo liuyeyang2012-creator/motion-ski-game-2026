@@ -49,3 +49,9 @@ it('deploys the verified dist directory through the official Pages actions', () 
   expect(workflow).toContain('path: dist')
   expect(workflow).toContain('actions/deploy-pages@v4')
 })
+
+it('enables public fixtures only for the Pages build mode', () => {
+  const packageJson = JSON.parse(readFileSync('package.json', 'utf8')) as { scripts: Record<string, string> }
+  expect(packageJson.scripts['build:pages']).toContain('vite build --mode pages')
+  expect(packageJson.scripts['build:hosting']).not.toContain('--mode pages')
+})

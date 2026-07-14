@@ -10,4 +10,13 @@ describe('mobile shell', () => {
     expect(document.querySelector('#camera-preview')).toBeInstanceOf(HTMLVideoElement)
     expect(document.querySelector('[role="status"]')?.textContent).toContain('准备')
   })
+
+  it('allows only known pose fixtures when the build gate is enabled', async () => {
+    const { parsePoseFixture } = await import('../src/main')
+
+    expect(parsePoseFixture('?poseFixture=seated-soft-success', true)).toBe('seated-soft-success')
+    expect(parsePoseFixture('?poseFixture=standing-soft-success', true)).toBe('standing-soft-success')
+    expect(parsePoseFixture('?poseFixture=arbitrary', true)).toBeUndefined()
+    expect(parsePoseFixture('?poseFixture=seated-soft-success', false)).toBeUndefined()
+  })
 })

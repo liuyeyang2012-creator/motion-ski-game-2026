@@ -1,8 +1,35 @@
 import { describe, expect, it, vi } from 'vitest'
-import { projectObstacle, SkiRenderer } from '../../src/render/ski-renderer'
+import {
+  getObstacleVisual,
+  getPlayerTransform,
+  projectObstacle,
+  shouldDrawHeadControlSkier,
+  SkiRenderer,
+} from '../../src/render/ski-renderer'
 import { createGame } from '../../src/game/game-engine'
 
 describe('ski renderer', () => {
+  it('maps head-control motions to their distinct obstacle visuals', () => {
+    expect(getObstacleVisual('turn-left')).toBe('lane')
+    expect(getObstacleVisual('turn-right')).toBe('lane')
+    expect(getObstacleVisual('head-up')).toBe('jump')
+    expect(getObstacleVisual('head-down')).toBe('duck')
+  })
+
+  it('moves the seated skier for jump and duck feedback', () => {
+    const neutral = getPlayerTransform({ action: 'neutral', lane: 0, width: 390, height: 844 })
+    const jump = getPlayerTransform({ action: 'jump', lane: 0, width: 390, height: 844 })
+    const duck = getPlayerTransform({ action: 'duck', lane: 0, width: 390, height: 844 })
+
+    expect(jump.y).toBeLessThan(neutral.y)
+    expect(duck.scaleY).toBeLessThan(1)
+  })
+
+  it('adds the head-control skier only for seated play', () => {
+    expect(shouldDrawHeadControlSkier('seated')).toBe(true)
+    expect(shouldDrawHeadControlSkier('standing')).toBe(false)
+  })
+
   it('projects near obstacles larger than distant obstacles', () => {
     expect(projectObstacle(0, 0.9, 390, 844).scale).toBeGreaterThan(projectObstacle(0, 0.2, 390, 844).scale)
   })

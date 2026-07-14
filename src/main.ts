@@ -1,6 +1,20 @@
 import './style.css'
 import { AppController, type PoseFixtureMode } from './app/app-controller'
 
+const POSE_FIXTURES: readonly PoseFixtureMode[] = [
+  'seated-quick-success',
+  'seated-soft-success',
+  'seated-stuck-action',
+  'seated-body-only',
+  'standing-soft-success',
+]
+
+export function parsePoseFixture(search: string, enabled: boolean): PoseFixtureMode | undefined {
+  if (!enabled) return undefined
+  const value = new URLSearchParams(search).get('poseFixture')
+  return POSE_FIXTURES.find(fixture => fixture === value)
+}
+
 export function mountShell(root: Element): void {
   root.innerHTML = `
     <main class="app-shell">
@@ -16,12 +30,10 @@ if (typeof document !== 'undefined') {
   if (root) {
     mountShell(root)
     const screen = document.querySelector<HTMLElement>('#screen-layer')
-    const fixtureValue = import.meta.env.DEV ? new URLSearchParams(location.search).get('poseFixture') : null
-    const fixtureMode: PoseFixtureMode | undefined = fixtureValue === 'seated-quick-success'
-      || fixtureValue === 'seated-soft-success'
-      || fixtureValue === 'seated-stuck-action'
-      ? fixtureValue
-      : undefined
+    const fixtureMode = parsePoseFixture(
+      location.search,
+      import.meta.env.DEV || import.meta.env.MODE === 'pages',
+    )
     if (screen) new AppController({ root: screen, storage: localStorage, fixtureMode }).start()
   }
 }

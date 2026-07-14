@@ -59,7 +59,9 @@ vi.mock('../../src/render/ski-renderer', () => ({
 
 import {
   AppController,
+  createFixtureSamples,
   getCameraErrorCopy,
+  getGameHint,
   initializePoseClientWithTimeout,
   PoseInitializationTimeoutError,
   shouldCapturePose,
@@ -171,6 +173,46 @@ describe('AppController', () => {
     expect(root.textContent).toContain('选择体感方式')
     expect((root.querySelector('input[value="seated"]') as HTMLInputElement).checked).toBe(true)
   })
+
+  it('uses head controls for seated hints and full-body controls for standing hints', () => {
+    expect(getGameHint('seated')).toBe('转头变道 · 抬头跳跃 · 低头躲避')
+    expect(getGameHint('standing')).toBe('侧身变道 · 低头过门 · 抬手加速')
+  })
+})
+
+describe('deterministic fixture calibration', () => {
+  it('completes seated calibration with a head-control profile', () => {
+    const session = new CalibrationSession('seated')
+    session.cameraReady(); session.modelReady()
+
+    for (const sample of createFixtureSamples('seated-soft-success', 'seated')) session.update(sample)
+
+    expect(session.snapshot()).toMatchObject({ phase: 'complete', style: 'seated' })
+    expect(session.snapshot().profile?.headControl).not.toBeNull()
+  })
+
+  it('completes standing calibration with full-body landmarks and no head-control profile', () => {
+    const session = new CalibrationSession('standing')
+    session.cameraReady(); session.modelReady()
+
+    for (const sample of createFixtureSamples('standing-soft-success', 'standing')) session.update(sample)
+
+    expect(session.snapshot()).toMatchObject({ phase: 'complete', style: 'standing' })
+    expect(session.snapshot().profile?.headControl).toBeNull()
+    expect(session.snapshot().profile?.hipY).not.toBeNull()
+  })
+
+  it('does not let body-only seated evidence recommend a skipped head step', () => {
+    const session = new CalibrationSession('seated')
+    session.cameraReady(); session.modelReady()
+
+    for (const sample of createFixtureSamples('seated-body-only', 'seated')) session.update(sample)
+    expect(session.snapshot()).toMatchObject({ phase: 'action', action: 'turn-left', canRecover: true })
+
+    session.useRecommendedSensitivity()
+
+    expect(session.snapshot()).toMatchObject({ phase: 'action', action: 'turn-left', completedSteps: 1 })
+  })
 })
 
 describe('pose capture lifecycle', () => {
@@ -252,6 +294,7 @@ describe('pose capture lifecycle', () => {
       await harness.captureLoop(successAt + 600, video)
       expect(session.snapshot().phase).toBe('complete')
       expect(harness.detector).not.toBeNull()
+      expect((harness.detector as unknown as { profile: { headControl?: unknown } }).profile.headControl).not.toBeNull()
       expect(root.querySelector('.screen.message')).not.toBeNull()
       expect(storage.setItem).toHaveBeenCalledOnce()
 

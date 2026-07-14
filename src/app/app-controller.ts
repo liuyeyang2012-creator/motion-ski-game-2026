@@ -1,6 +1,6 @@
 import { CameraController } from '../camera/camera-controller'
 import { advanceGame, createGame } from '../game/game-engine'
-import type { GameState } from '../game/types'
+import type { GameEvent, GameState, Obstacle } from '../game/types'
 import {
   CalibrationSession,
   type CalibrationModelMode,
@@ -11,16 +11,29 @@ import { createDirectPoseClient, DirectPoseClient } from '../pose/direct-pose-cl
 import { LifecycleMonitor, type LifecycleEvent } from '../platform/lifecycle'
 import type { PoseSample } from '../pose/types'
 import { hasTrackingPose } from '../pose/pose-quality'
-import { SkiRenderer } from '../render/ski-renderer'
+import { getObstacleVisual, SkiRenderer } from '../render/ski-renderer'
 import { loadRecords, recordResult, saveRecords } from '../storage/player-records'
 import { saveCalibrationProfile } from '../storage/calibration-profiles'
 import { renderCalibration, type CalibrationViewActions } from '../ui/calibration-view'
 import { renderMessage, renderResults, renderResume, renderSetup, renderWelcome, type SetupChoice } from '../ui/screens'
+import type { PlayStyle } from './types'
 
-export type PoseFixtureMode = 'seated-quick-success' | 'seated-soft-success' | 'seated-stuck-action'
+export type PoseFixtureMode =
+  | 'seated-quick-success'
+  | 'seated-soft-success'
+  | 'seated-stuck-action'
+  | 'seated-body-only'
+  | 'standing-soft-success'
 interface Options { root: HTMLElement; storage: Pick<Storage, 'getItem' | 'setItem'>; fixtureMode?: boolean | PoseFixtureMode }
 
 export const POSE_INITIALIZATION_TIMEOUT_MS = 15_000
+export const FIXTURE_FRAME_INTERVAL_MS = 40
+
+export function getGameHint(style: PlayStyle): string {
+  return style === 'seated'
+    ? '转头变道 · 抬头跳跃 · 低头躲避'
+    : '侧身变道 · 低头过门 · 抬手加速'
+}
 
 export class PoseInitializationTimeoutError extends Error {
   constructor() {
@@ -65,57 +78,72 @@ export function shouldVibrate(previous: CalibrationSnapshot, next: CalibrationSn
   return previous.phase !== 'step-success' && next.phase === 'step-success'
 }
 
-function createSeatedFixtureSamples(): PoseSample[] {
-  const sample = (
-    capturedAt: number,
-    changes: Record<number, Partial<{ x: number; y: number }>> = {},
-    hidden: number[] = [],
-  ): PoseSample => {
-    const landmarks = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, z: 0, visibility: 1 }))
-    Object.assign(landmarks[0], { x: 0.5, y: 0.2 })
-    Object.assign(landmarks[2], { x: 0.47, y: 0.18 })
-    Object.assign(landmarks[5], { x: 0.53, y: 0.18 })
-    Object.assign(landmarks[7], { x: 0.43, y: 0.21 })
-    Object.assign(landmarks[8], { x: 0.57, y: 0.21 })
-    Object.assign(landmarks[11], { x: 0.4, y: 0.4 })
-    Object.assign(landmarks[12], { x: 0.6, y: 0.4 })
-    Object.assign(landmarks[15], { x: 0.4, y: 0.65 })
-    Object.assign(landmarks[16], { x: 0.6, y: 0.65 })
-    Object.assign(landmarks[23], { x: 0.43, y: 0.7 })
-    Object.assign(landmarks[24], { x: 0.57, y: 0.7 })
-    Object.assign(landmarks[25], { x: 0.43, y: 0.9 })
-    Object.assign(landmarks[26], { x: 0.57, y: 0.9 })
-    for (const index of hidden) landmarks[index].visibility = 0
-    for (const [index, change] of Object.entries(changes)) Object.assign(landmarks[Number(index)], change)
-    return { capturedAt, landmarks }
-  }
-  const action = (
-    start: number,
-    nextStepAt: number,
-    changes: Record<number, Partial<{ x: number; y: number }>>,
-  ) => [
-    sample(start, changes),
-    sample(start + 80, changes),
-    { capturedAt: start + 160, landmarks: [] },
-    ...Array.from({ length: 5 }, (_, index) => sample(start + 240 + index * 80, changes)),
-    sample(nextStepAt),
-  ]
-  const moveFace = (dx: number, dy = 0) => Object.fromEntries([0, 2, 5, 7, 8].map(index => [index, {
-    x: sample(0).landmarks[index].x + dx,
-    y: sample(0).landmarks[index].y + dy,
-  }]))
+type FixtureChanges = Record<number, Partial<{ x: number; y: number }>>
 
+function createFixtureSample(capturedAt: number, changes: FixtureChanges = {}, hidden: number[] = []): PoseSample {
+  const landmarks = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, z: 0, visibility: 1 }))
+  Object.assign(landmarks[0], { x: 0.5, y: 0.2 })
+  Object.assign(landmarks[2], { x: 0.47, y: 0.18 })
+  Object.assign(landmarks[5], { x: 0.53, y: 0.18 })
+  Object.assign(landmarks[7], { x: 0.43, y: 0.21 })
+  Object.assign(landmarks[8], { x: 0.57, y: 0.21 })
+  Object.assign(landmarks[11], { x: 0.4, y: 0.4 })
+  Object.assign(landmarks[12], { x: 0.6, y: 0.4 })
+  Object.assign(landmarks[15], { x: 0.4, y: 0.65 })
+  Object.assign(landmarks[16], { x: 0.6, y: 0.65 })
+  Object.assign(landmarks[23], { x: 0.43, y: 0.7 })
+  Object.assign(landmarks[24], { x: 0.57, y: 0.7 })
+  Object.assign(landmarks[25], { x: 0.43, y: 0.9 })
+  Object.assign(landmarks[26], { x: 0.57, y: 0.9 })
+  for (const index of hidden) landmarks[index].visibility = 0
+  for (const [index, change] of Object.entries(changes)) Object.assign(landmarks[Number(index)], change)
+  return { capturedAt, landmarks }
+}
+
+function fixtureAction(start: number, nextStepAt: number, changes: FixtureChanges): PoseSample[] {
   return [
-    ...Array.from({ length: 13 }, (_, index) => sample(
+    createFixtureSample(start, changes),
+    createFixtureSample(start + 80, changes),
+    { capturedAt: start + 160, landmarks: [] },
+    ...Array.from({ length: 5 }, (_, index) => createFixtureSample(start + 240 + index * 80, changes)),
+    createFixtureSample(nextStepAt),
+  ]
+}
+
+function faceChanges(dx = 0, dy = 0): FixtureChanges {
+  const neutral = createFixtureSample(0)
+  return Object.fromEntries([0, 2, 5, 7, 8].map(index => [index, {
+    x: neutral.landmarks[index].x + dx,
+    y: neutral.landmarks[index].y + dy,
+  }]))
+}
+
+function createSeatedFixtureSamples(): PoseSample[] {
+  return [
+    ...Array.from({ length: 13 }, (_, index) => createFixtureSample(
       index * 80,
       {},
       [15, 16, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32],
     )),
-    sample(1_600),
-    ...action(1_680, 2_880, moveFace(0.04)),
-    ...action(2_960, 4_160, moveFace(-0.04)),
-    ...action(4_240, 5_440, moveFace(0, -0.03)),
-    ...action(5_520, 6_720, moveFace(0, 0.03)),
+    createFixtureSample(1_600),
+    ...fixtureAction(1_680, 2_880, faceChanges(0.04)),
+    ...fixtureAction(2_960, 4_160, faceChanges(-0.04)),
+    ...fixtureAction(4_240, 5_440, faceChanges(0, -0.03)),
+    ...fixtureAction(5_520, 6_720, faceChanges(0, 0.03)),
+  ]
+}
+
+function createStandingFixtureSamples(): PoseSample[] {
+  const moveTorso = (dx: number): FixtureChanges => Object.fromEntries(
+    [11, 12, 23, 24].map(index => [index, { x: createFixtureSample(0).landmarks[index].x + dx }]),
+  )
+  return [
+    ...Array.from({ length: 11 }, (_, index) => createFixtureSample(index * 80)),
+    ...fixtureAction(880, 2_080, moveTorso(-0.06)),
+    ...fixtureAction(2_160, 3_360, moveTorso(0.06)),
+    ...fixtureAction(3_440, 4_640, { 0: { y: 0.28 } }),
+    ...fixtureAction(4_720, 5_920, { 15: { y: 0.28 }, 16: { y: 0.28 } }),
+    ...fixtureAction(6_000, 7_200, { 23: { y: 0.82 }, 24: { y: 0.82 } }),
   ]
 }
 
@@ -134,6 +162,34 @@ function createStuckFixtureSamples(): PoseSample[] {
     landmarks: neutral.landmarks.map(landmark => ({ ...landmark })),
   }
   return [...readyForTurn, subthresholdTurn, stalled]
+}
+
+function createBodyOnlyFixtureSamples(): PoseSample[] {
+  const readyForTurn = createSeatedFixtureSamples().slice(0, 14)
+  return [
+    ...readyForTurn,
+    createFixtureSample(1_680, {
+      11: { x: 0.44 }, 12: { x: 0.64 },
+      23: { x: 0.47 }, 24: { x: 0.61 },
+    }),
+    createFixtureSample(7_600),
+  ]
+}
+
+export function createFixtureSamples(mode: PoseFixtureMode, style: PlayStyle): PoseSample[] {
+  if (style === 'standing') return createStandingFixtureSamples()
+  if (mode === 'seated-stuck-action') return createStuckFixtureSamples()
+  if (mode === 'seated-body-only') return createBodyOnlyFixtureSamples()
+  return createSeatedFixtureSamples()
+}
+
+function createSeatedQuickFixtureObstacles(): Obstacle[] {
+  return [
+    { id: 1, appearsAt: 700, lane: 0, requiredMotion: 'turn-left', warningLeadMs: 1_500 },
+    { id: 2, appearsAt: 1_400, lane: -1, requiredMotion: 'turn-right', warningLeadMs: 1_500 },
+    { id: 3, appearsAt: 2_200, lane: 0, requiredMotion: 'head-up', warningLeadMs: 1_500 },
+    { id: 4, appearsAt: 3_000, lane: 0, requiredMotion: 'head-down', warningLeadMs: 1_500 },
+  ]
 }
 
 export class AppController {
@@ -157,6 +213,8 @@ export class AppController {
   private calibrating = false
   private pregameInterrupted = false
   private poseInitialization = 0
+  private fixtureTimers: number[] = []
+  private fixtureCalibrationSuccesses: number[] = []
 
   constructor(options: Options) {
     this.root = options.root
@@ -180,6 +238,7 @@ export class AppController {
     const canvas = document.querySelector<HTMLCanvasElement>('#game-canvas')
     if (!video || !canvas) return
     this.stopCurrentCamera(video)
+    this.clearFixtureTimers()
     this.poseClient?.dispose()
     this.poseClient = null
     window.clearTimeout(this.countdownTimer)
@@ -188,6 +247,7 @@ export class AppController {
     this.pendingMotions = []
     this.calibrating = true
     this.pregameInterrupted = false
+    this.resetFixtureDiagnostics()
     const session = new CalibrationSession(this.choice.playStyle)
     this.calibrationSession = session
     document.body.classList.add('calibrating')
@@ -197,10 +257,11 @@ export class AppController {
     if (this.fixtureMode) {
       session.cameraReady()
       session.modelReady()
-      const samples = this.fixtureMode === 'seated-stuck-action'
-        ? createStuckFixtureSamples()
-        : createSeatedFixtureSamples()
-      samples.forEach((sample, index) => window.setTimeout(() => this.onPose(sample), index * 20))
+      const samples = createFixtureSamples(this.fixtureMode, this.choice.playStyle)
+      samples.forEach((sample, index) => this.fixtureTimers.push(window.setTimeout(
+        () => this.onPose(sample),
+        index * FIXTURE_FRAME_INTERVAL_MS,
+      )))
       return
     }
     const camera = new CameraController()
@@ -354,7 +415,106 @@ export class AppController {
 
   private renderCalibrationSession(session: CalibrationSession): void {
     if (!this.isCurrentCalibration(session)) return
-    renderCalibration(this.root, session.snapshot(), this.calibrationViewActions(session))
+    const snapshot = session.snapshot()
+    this.recordFixtureCalibrationSuccess(snapshot)
+    renderCalibration(this.root, snapshot, this.calibrationViewActions(session))
+  }
+
+  private fixtureShell(): HTMLElement | null {
+    if (!this.fixtureMode) return null
+    return this.root.closest('.app-shell') as HTMLElement | null
+  }
+
+  private resetFixtureDiagnostics(): void {
+    this.fixtureCalibrationSuccesses = []
+    const shell = this.fixtureShell()
+    if (!shell) return
+    for (const attribute of [
+      'data-fixture-last-motion',
+      'data-fixture-resolved-obstacle',
+      'data-fixture-collisions',
+      'data-fixture-player-action',
+      'data-fixture-player-lane',
+    ]) shell.removeAttribute(attribute)
+    shell.dataset.fixtureCalibrationSuccesses = ''
+  }
+
+  private recordFixtureCalibrationSuccess(snapshot: CalibrationSnapshot): void {
+    if (snapshot.phase !== 'step-success'
+      || this.fixtureCalibrationSuccesses.includes(snapshot.completedSteps)) return
+    this.fixtureCalibrationSuccesses.push(snapshot.completedSteps)
+    const shell = this.fixtureShell()
+    if (shell) shell.dataset.fixtureCalibrationSuccesses = this.fixtureCalibrationSuccesses.join(',')
+  }
+
+  private recordFixtureGameState(): void {
+    const shell = this.fixtureShell()
+    if (!shell || !this.game) return
+    shell.dataset.fixtureCollisions = String(this.game.collisions)
+    shell.dataset.fixturePlayerAction = this.game.playerAction
+    shell.dataset.fixturePlayerLane = String(this.game.playerLane)
+  }
+
+  private recordFixtureGameEvent(previous: GameState, events: GameEvent[]): void {
+    const shell = this.fixtureShell()
+    if (!shell || !this.game) return
+    shell.dataset.fixtureCollisions = String(this.game.collisions)
+    const motion = events.find(event => event.type === 'motion')?.motion
+    if (!motion) return
+    shell.dataset.fixtureLastMotion = motion.type
+    shell.dataset.fixturePlayerAction = this.game.playerAction
+    shell.dataset.fixturePlayerLane = String(this.game.playerLane)
+    const previouslyResolved = new Set(previous.resolvedObstacleIds)
+    const newlyResolved = new Set(this.game.resolvedObstacleIds.filter(id => !previouslyResolved.has(id)))
+    const visual = getObstacleVisual(motion.type)
+    const obstacle = previous.obstacles.find(candidate => newlyResolved.has(candidate.id)
+      && getObstacleVisual(candidate.requiredMotion) === visual)
+    if (obstacle) shell.dataset.fixtureResolvedObstacle = getObstacleVisual(obstacle.requiredMotion)
+  }
+
+  private scheduleSeatedQuickFixtureGame(): void {
+    const schedule = (delay: number, samples: PoseSample[]) => {
+      samples.forEach((sample, index) => this.fixtureTimers.push(window.setTimeout(
+        () => this.onPose(sample),
+        delay + index * FIXTURE_FRAME_INTERVAL_MS,
+      )))
+    }
+    schedule(150, [
+      createFixtureSample(8_000),
+      createFixtureSample(8_080, faceChanges(0.04)),
+      createFixtureSample(8_240, faceChanges(0.04)),
+      createFixtureSample(8_320),
+      createFixtureSample(8_480),
+    ])
+    schedule(900, [
+      createFixtureSample(9_000),
+      createFixtureSample(9_080, faceChanges(-0.04)),
+      createFixtureSample(9_240, faceChanges(-0.04)),
+      createFixtureSample(9_320),
+      createFixtureSample(9_480),
+    ])
+    schedule(1_650, [
+      createFixtureSample(10_000),
+      createFixtureSample(10_080, faceChanges(0, -0.03)),
+      createFixtureSample(10_160, faceChanges(0, -0.03)),
+      createFixtureSample(10_240),
+      createFixtureSample(10_400),
+    ])
+    schedule(2_400, [
+      createFixtureSample(11_000),
+      createFixtureSample(11_080, faceChanges(0, 0.03)),
+      createFixtureSample(11_280, faceChanges(0, 0.03)),
+      createFixtureSample(11_360),
+      createFixtureSample(11_520),
+    ])
+    this.fixtureTimers.push(window.setTimeout(() => {
+      if (this.game?.status === 'playing') this.game.elapsedMs = 29_950
+    }, 3_300))
+  }
+
+  private clearFixtureTimers(): void {
+    for (const timer of this.fixtureTimers) window.clearTimeout(timer)
+    this.fixtureTimers = []
   }
 
   private finishCalibrationIfComplete(snapshot: CalibrationSnapshot): void {
@@ -385,20 +545,33 @@ export class AppController {
   private startGame(): void {
     if (this.pregameInterrupted || !this.detector) return
     this.clearCalibrationState()
-    this.root.innerHTML = '<div class="game-hint">侧身变道 · 低头过门 · 抬手加速</div>'
+    this.clearFixtureTimers()
+    this.root.innerHTML = `<div class="game-hint">${getGameHint(this.choice.playStyle)}</div>`
     this.game = createGame({ ...this.choice, seed: Date.now() })
-    if (this.fixtureMode && this.choice.sessionKind === 'quick') {
-      this.game.elapsedMs = 29_900
-      this.game.motionCounts = { 'lean-left': 3, duck: 2, 'hands-up': 1 }
+    if (this.fixtureMode && this.choice.sessionKind === 'quick' && this.fixtureMode !== 'seated-quick-success') {
+      this.game.motionCounts = this.choice.playStyle === 'seated'
+        ? { 'turn-left': 2, 'turn-right': 1, 'head-up': 2, 'head-down': 1 }
+        : { 'lean-left': 3, duck: 2, 'hands-up': 1, squat: 1 }
       this.game.score = 900
       this.game.bestCombo = 7
       this.game.distance = 320
     }
+    if (this.fixtureMode === 'seated-quick-success' && this.choice.playStyle === 'seated') {
+      this.game.obstacles = createSeatedQuickFixtureObstacles()
+    }
+    this.recordFixtureGameState()
     this.lastFrame = performance.now()
     cancelAnimationFrame(this.captureFrame)
     const video = document.querySelector<HTMLVideoElement>('#camera-preview')
     if (!this.fixtureMode && video) this.captureFrame = requestAnimationFrame(time => { void this.captureLoop(time, video) })
     this.gameFrame = requestAnimationFrame(time => this.gameLoop(time))
+    if (this.fixtureMode === 'seated-quick-success' && this.choice.playStyle === 'seated') {
+      this.scheduleSeatedQuickFixtureGame()
+    } else if (this.fixtureMode && this.choice.sessionKind === 'quick') {
+      this.fixtureTimers.push(window.setTimeout(() => {
+        if (this.game?.status === 'playing') this.game.elapsedMs = 29_950
+      }, 1_000))
+    }
   }
 
   private gameLoop(time: number): void {
@@ -408,8 +581,10 @@ export class AppController {
     this.renderer.recordFrameDuration(rawDelta)
     this.lifecycle.addActiveTime(delta)
     this.lastFrame = time
-    const result = advanceGame(this.game, delta, this.pendingMotions.splice(0))
+    const previous = this.game
+    const result = advanceGame(previous, delta, this.pendingMotions.splice(0))
     this.game = result.state
+    this.recordFixtureGameEvent(previous, result.events)
     this.renderer.render(this.game)
     if (this.game.status === 'finished') { this.finishGame(); return }
     this.gameFrame = requestAnimationFrame(next => this.gameLoop(next))
@@ -461,7 +636,7 @@ export class AppController {
     renderMessage(this.root, '准备继续', '3 · 2 · 1')
     window.setTimeout(() => {
       if (!this.game) return
-      this.root.innerHTML = '<div class="game-hint">侧身变道 · 低头过门 · 抬手加速</div>'
+      this.root.innerHTML = `<div class="game-hint">${getGameHint(this.choice.playStyle)}</div>`
       this.game = { ...this.game, status: 'playing' }
       this.lastFrame = performance.now()
       if (!this.fixtureMode && video) this.captureFrame = requestAnimationFrame(time => { void this.captureLoop(time, video) })
@@ -474,6 +649,7 @@ export class AppController {
     this.clearCalibrationState()
     cancelAnimationFrame(this.gameFrame)
     cancelAnimationFrame(this.captureFrame)
+    this.clearFixtureTimers()
     this.stopCurrentCamera(document.querySelector<HTMLVideoElement>('#camera-preview') ?? undefined)
     this.poseClient?.dispose()
     const sessionResult = { score: this.game.score, bestCombo: this.game.bestCombo, activeMs: this.game.elapsedMs, ...this.choice }

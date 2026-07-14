@@ -1,8 +1,37 @@
+import type { PlayStyle } from '../app/types'
 import type { GameState } from '../game/types'
+import type { MotionType } from '../motion/motion-detector'
 
 export type QualityLevel = 'high' | 'medium' | 'low'
+export type ObstacleVisual = 'lane' | 'jump' | 'duck' | 'hands' | 'squat'
 
 export interface Projection { x: number; y: number; scale: number }
+
+export function getObstacleVisual(motion: MotionType): ObstacleVisual {
+  if (motion === 'head-up') return 'jump'
+  if (motion === 'head-down' || motion === 'duck') return 'duck'
+  if (motion === 'hands-up') return 'hands'
+  if (motion === 'squat') return 'squat'
+  return 'lane'
+}
+
+export function shouldDrawHeadControlSkier(style: PlayStyle): boolean {
+  return style === 'seated'
+}
+
+export function getPlayerTransform(options: {
+  action: GameState['playerAction']
+  lane: -1 | 0 | 1
+  width: number
+  height: number
+}): { x: number; y: number; scaleY: number } {
+  const { action, lane, width, height } = options
+  return {
+    x: width / 2 + lane * width * 0.28,
+    y: height * (action === 'jump' ? 0.7 : action === 'duck' ? 0.85 : 0.82),
+    scaleY: action === 'duck' ? 0.62 : 1,
+  }
+}
 
 export function projectObstacle(lane: number, depth: number, width: number, height: number): Projection {
   const clamped = Math.max(0, Math.min(1, depth))
@@ -72,6 +101,7 @@ export class SkiRenderer {
       this.drawObstacle(obstacle.lane, depth, width, height, obstacle.requiredMotion)
     }
     if (this.quality !== 'low') this.drawSnow(width, height, state.elapsedMs)
+    if (shouldDrawHeadControlSkier(state.playStyle)) this.drawHeadControlSkier(state, width, height)
     this.drawHud(state, width)
   }
 
@@ -91,14 +121,60 @@ export class SkiRenderer {
     for (const lane of [-1, 1]) { ctx.beginPath(); ctx.moveTo(width / 2, height * 0.32); ctx.lineTo(width / 2 + lane * width * 0.28, height); ctx.stroke() }
   }
 
-  private drawObstacle(lane: number, depth: number, width: number, height: number, motion: string): void {
+  private drawObstacle(lane: number, depth: number, width: number, height: number, motion: MotionType): void {
     const ctx = this.context
     const point = projectObstacle(lane, depth, width, height)
+    const visual = getObstacleVisual(motion)
     ctx.save(); ctx.translate(point.x, point.y); ctx.scale(point.scale, point.scale)
     ctx.shadowBlur = this.quality === 'low' ? 0 : 16; ctx.shadowColor = '#16405c55'
-    ctx.fillStyle = motion === 'hands-up' ? '#66e3ff' : '#174d39'
-    ctx.beginPath(); ctx.moveTo(0, -70); ctx.lineTo(-36, 16); ctx.lineTo(36, 16); ctx.closePath(); ctx.fill()
-    ctx.fillStyle = '#6b462d'; ctx.fillRect(-7, 12, 14, 35); ctx.restore()
+    if (visual === 'jump') {
+      ctx.fillStyle = '#714326'
+      ctx.fillRect(-48, -10, 96, 20)
+      ctx.fillStyle = '#f6fbff'
+      ctx.fillRect(-42, -10, 25, 5)
+    } else if (visual === 'duck') {
+      ctx.fillStyle = '#164d65'
+      ctx.fillRect(-50, -76, 12, 92)
+      ctx.fillRect(38, -76, 12, 92)
+      ctx.fillStyle = '#2bbbd0'
+      ctx.fillRect(-50, -76, 100, 22)
+    } else if (visual === 'lane') {
+      ctx.fillStyle = '#174d39'
+      ctx.beginPath(); ctx.moveTo(0, -70); ctx.lineTo(-40, 18); ctx.lineTo(40, 18); ctx.closePath(); ctx.fill()
+      ctx.fillStyle = '#6b462d'; ctx.fillRect(-7, 12, 14, 35)
+    } else {
+      ctx.fillStyle = visual === 'hands' ? '#66e3ff' : '#8b5bd6'
+      ctx.beginPath(); ctx.moveTo(0, -70); ctx.lineTo(-36, 16); ctx.lineTo(36, 16); ctx.closePath(); ctx.fill()
+      ctx.fillStyle = '#6b462d'; ctx.fillRect(-7, 12, 14, 35)
+    }
+    ctx.restore()
+    ctx.shadowBlur = 0
+  }
+
+  private drawHeadControlSkier(state: Readonly<GameState>, width: number, height: number): void {
+    const ctx = this.context
+    const transform = getPlayerTransform({
+      action: state.playerAction,
+      lane: state.playerLane,
+      width,
+      height,
+    })
+    ctx.save()
+    ctx.translate(transform.x, transform.y)
+    ctx.scale(1, transform.scaleY)
+    ctx.shadowBlur = this.quality === 'low' ? 0 : 12
+    ctx.shadowColor = '#05283f66'
+    ctx.fillStyle = '#f7c59f'
+    ctx.beginPath(); ctx.arc(0, -55, 14, 0, Math.PI * 2); ctx.fill()
+    ctx.fillStyle = '#ff4d6d'
+    ctx.fillRect(-17, -43, 34, 43)
+    ctx.fillStyle = '#123d63'
+    ctx.fillRect(-17, 0, 12, 35)
+    ctx.fillRect(5, 0, 12, 35)
+    ctx.fillStyle = '#e8f8ff'
+    ctx.fillRect(-27, 33, 24, 5)
+    ctx.fillRect(3, 33, 24, 5)
+    ctx.restore()
     ctx.shadowBlur = 0
   }
 
